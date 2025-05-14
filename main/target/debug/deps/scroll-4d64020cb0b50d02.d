@@ -1,0 +1,14 @@
+C:\Users\W\Developer\DeCompiler\main\target\debug\deps\libscroll-4d64020cb0b50d02.rmeta: C:\Users\W\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\scroll-0.11.0\src\lib.rs C:\Users\W\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\scroll-0.11.0\src\ctx.rs C:\Users\W\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\scroll-0.11.0\src\endian.rs C:\Users\W\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\scroll-0.11.0\src\error.rs C:\Users\W\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\scroll-0.11.0\src\greater.rs C:\Users\W\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\scroll-0.11.0\src\leb128.rs C:\Users\W\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\scroll-0.11.0\src\lesser.rs C:\Users\W\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\scroll-0.11.0\src\pread.rs C:\Users\W\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\scroll-0.11.0\src\pwrite.rs C:\Users\W\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\scroll-0.11.0\src\../README.md
+
+C:\Users\W\Developer\DeCompiler\main\target\debug\deps\scroll-4d64020cb0b50d02.d: C:\Users\W\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\scroll-0.11.0\src\lib.rs C:\Users\W\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\scroll-0.11.0\src\ctx.rs C:\Users\W\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\scroll-0.11.0\src\endian.rs C:\Users\W\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\scroll-0.11.0\src\error.rs C:\Users\W\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\scroll-0.11.0\src\greater.rs C:\Users\W\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\scroll-0.11.0\src\leb128.rs C:\Users\W\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\scroll-0.11.0\src\lesser.rs C:\Users\W\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\scroll-0.11.0\src\pread.rs C:\Users\W\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\scroll-0.11.0\src\pwrite.rs C:\Users\W\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\scroll-0.11.0\src\../README.md
+
+C:\Users\W\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\scroll-0.11.0\src\lib.rs:
+C:\Users\W\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\scroll-0.11.0\src\ctx.rs:
+C:\Users\W\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\scroll-0.11.0\src\endian.rs:
+C:\Users\W\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\scroll-0.11.0\src\error.rs:
+C:\Users\W\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\scroll-0.11.0\src\greater.rs:
+C:\Users\W\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\scroll-0.11.0\src\leb128.rs:
+C:\Users\W\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\scroll-0.11.0\src\lesser.rs:
+C:\Users\W\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\scroll-0.11.0\src\pread.rs:
+C:\Users\W\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\scroll-0.11.0\src\pwrite.rs:
+C:\Users\W\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\scroll-0.11.0\src\../README.md:
