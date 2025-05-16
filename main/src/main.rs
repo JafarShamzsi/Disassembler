@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use clap::Parser;
 
 pub mod parser;
+pub mod disassembler;
 // Commented out until you create these modules
 // pub mod exe;  
 // pub mod util;  
@@ -14,7 +15,8 @@ pub mod parser;
 // Comment out these imports until you have the modules
 // use exe::ExeExecutable;
 // use x86::X86Executable;
-// use disassembler::{Diasmopts, Instruction};
+use disassembler::{Diasmopts, Instruction, disasm};
+use parser::TextSection;
 
 #[derive(Debug, Clone, Parser)]
 pub struct Opts {
@@ -55,22 +57,22 @@ fn main() -> io::Result<()> {
         // Comment out disassembler code until you implement it
         println!("Successfully loaded text section at VA {:#x} with {} bytes", va, bytes.len());
         
-        /*
-        if opts.cfg {
-            let graph = disassembler::build_cfg(bytes, va as u64);
-            println!("{}", graph.to_dot());
-        } else {
-            let disasm_opts = DisasmOpts { raw: opts.raw };
-            for inst in disassembler::disasm(bytes, va as u64, &disasm_opts) {
-                if opts.raw {
-                    println!("{:#08x}: {:02x?}", inst.address, inst.bytes);
-                } else {
-                    println!("{:#08x}: {}", inst.address, inst.text);
-                }
-            }
-        }
-        */
+        
     }
 
+    let section = parsed.get_text_section();
+    let opts = DisasmOpts {
+        base_address: section.virtual_address as u64,
+        bitness: 64
+    };
+
+    let instructions =  disasm(&section.data, opts);
+    
+    for inst in instructions {
+        println!("{:#08x}: {}", inst.address, inst.text);
+    }
+
+
     Ok(())
+
 }
