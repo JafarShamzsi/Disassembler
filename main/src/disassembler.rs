@@ -1,10 +1,10 @@
-use iced_x86::{Decoder, DecoderOptions, Instruction as IcedInstruction, Encoder, Code, Register};
+use iced_x86::{Code, Decoder, DecoderOptions, Encoder, Instruction as IcedInstruction, Register};
 use std::fmt;
 
 #[derive(Debug, Clone)]
 pub struct DisasmOpts {
     pub base_address: u64,
-    pub bitness: u32
+    pub bitness: u32,
 }
 
 #[derive(Debug, Clone)]
@@ -25,18 +25,18 @@ pub fn disasm(bytes: &[u8], opts: DisasmOpts) -> Vec<Instruction> {
         opts.bitness.try_into().unwrap(),
         bytes,
         opts.base_address,
-        DecoderOptions::NONE
+        DecoderOptions::NONE,
     );
     let mut instructions = Vec::new();
 
     while decoder.can_decode() {
         let instr = decoder.decode();
-        let mut bytes_buf = vec![0u8; instr.len()];
-        
+        let mut bytes_buf = bytes[offset..offset + size].to_vec();
+
         let ip = instr.ip();
         let offset = (ip - opts.base_address) as usize;
         let size = instr.len() as usize;
-        let raw_bytes = bytes[offset .. offset + size].to_vec();
+        let raw_bytes = bytes[offset..offset + size].to_vec();
 
         let mut output = String::new();
         let formatter = iced_x86::NasmFormatter::new();
@@ -52,4 +52,3 @@ pub fn disasm(bytes: &[u8], opts: DisasmOpts) -> Vec<Instruction> {
 
     instructions
 }
-

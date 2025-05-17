@@ -4,18 +4,10 @@ use std::path::PathBuf;
 
 use clap::Parser;
 
-pub mod parser;
 pub mod disassembler;
-// Commented out until you create these modules
-// pub mod exe;  
-// pub mod util;  
-// pub mod x86;  
-// pub mod disassembler;
+pub mod parser;
 
-// Comment out these imports until you have the modules
-// use exe::ExeExecutable;
-// use x86::X86Executable;
-use disassembler::{Diasmopts, Instruction, disasm};
+use disassembler::{DisasmOpts, Instruction, disasm};
 use parser::TextSection;
 
 #[derive(Debug, Clone, Parser)]
@@ -26,7 +18,7 @@ pub struct Opts {
     #[clap(long)]
     cfg: bool,
 
-    #[clap(name = "FILE", value_parser)] // --flag doesn't work added long to work it also without flag it runs 
+    #[clap(name = "FILE", value_parser)]
     files: Vec<PathBuf>,
 }
 
@@ -47,32 +39,30 @@ fn main() -> io::Result<()> {
             buf
         };
 
-        let parser::TextSection { va, bytes } =
-            parser::get_text_section(&data)
-                .unwrap_or_else(|e| {
-                    eprintln!("{}: failed to parse .text: {}", path.display(), e);
-                    std::process::exit(1);
-                });
+        let TextSection { va, bytes } = parser::get_text_section(&data).unwrap_or_else(|e| {
+            eprintln!("{}: failed to parse .text: {}", path.display(), e);
+            std::process::exit(1);
+        });
 
-        // Comment out disassembler code until you implement it
-        println!("Successfully loaded text section at VA {:#x} with {} bytes", va, bytes.len());
-        
-        
+        println!(
+            "Successfully loaded text section from {} at VA {:#x} with {} bytes",
+            path.display(),
+            va,
+            bytes.len()
+        );
+
+        let disasm_opts = DisasmOpts {
+            base_address: va,
+            bitness: 64,
+        };
+
+        let instructions = disasm(&bytes, disasm_opts);
+        for inst in instructions {
+            println!("{}", inst); // uses fmt::Display
+        }
+
+        println!(); // spacing between files
     }
-
-    let section = parsed.get_text_section();
-    let opts = DisasmOpts {
-        base_address: section.virtual_address as u64,
-        bitness: 64
-    };
-
-    let instructions =  disasm(&section.data, opts);
-    
-    for inst in instructions {
-        println!("{:#08x}: {}", inst.address, inst.text);
-    }
-
 
     Ok(())
-
 }
