@@ -4,14 +4,20 @@ use std::path::PathBuf;
 
 use clap::Parser;
 
-pub mod parser;
 pub mod disassembler;
+<<<<<<< HEAD
 // Commented out until you create these modules
 // pub mod exe;
 // pub mod util;
 // pub mod x86;
 
 use disassembler::{DisasmOpts, disasm};
+=======
+pub mod parser;
+
+use disassembler::{DisasmOpts, Instruction, disasm};
+use parser::TextSection;
+>>>>>>> 62f665544760dc494dd6518dd010b42ff3c0a23b
 
 #[derive(Debug, Clone, Parser)]
 pub struct Opts {
@@ -42,13 +48,12 @@ fn main() -> io::Result<()> {
             buf
         };
 
-        let parser::TextSection { va, bytes } =
-            parser::get_text_section(&data)
-                .unwrap_or_else(|e| {
-                    eprintln!("{}: failed to parse .text: {}", path.display(), e);
-                    std::process::exit(1);
-                });
+        let TextSection { va, bytes } = parser::get_text_section(&data).unwrap_or_else(|e| {
+            eprintln!("{}: failed to parse .text: {}", path.display(), e);
+            std::process::exit(1);
+        });
 
+<<<<<<< HEAD
         println!("Successfully loaded text section at VA {:#x} with {} bytes", va, bytes.len());
 
         // Disassemble the loaded bytes
@@ -65,3 +70,27 @@ fn main() -> io::Result<()> {
 
     Ok(())
 }
+=======
+        println!(
+            "Successfully loaded text section from {} at VA {:#x} with {} bytes",
+            path.display(),
+            va,
+            bytes.len()
+        );
+
+        let disasm_opts = DisasmOpts {
+            base_address: va,
+            bitness: 64,
+        };
+
+        let instructions = disasm(&bytes, disasm_opts);
+        for inst in instructions {
+            println!("{}", inst); // uses fmt::Display
+        }
+
+        println!(); // spacing between files
+    }
+
+    Ok(())
+}
+>>>>>>> 62f665544760dc494dd6518dd010b42ff3c0a23b
