@@ -1,8 +1,4 @@
-<<<<<<< HEAD
-use iced_x86::{Decoder, DecoderOptions, NasmFormatter, Formatter, FormatterOutput};
-=======
 use iced_x86::{Code, Decoder, DecoderOptions, Encoder, Instruction as IcedInstruction, Register};
->>>>>>> 62f665544760dc494dd6518dd010b42ff3c0a23b
 use std::fmt;
 
 #[derive(Debug, Clone)]
@@ -36,21 +32,18 @@ pub fn disasm(bytes: &[u8], opts: DisasmOpts) -> Vec<Instruction> {
 
     while decoder.can_decode() {
         let instr = decoder.decode();
-<<<<<<< HEAD
-=======
+
         let mut bytes_buf = bytes[offset..offset + size].to_vec();
->>>>>>> 62f665544760dc494dd6518dd010b42ff3c0a23b
 
         let ip = instr.ip();
         let offset = (ip - opts.base_address) as usize;
         let size = instr.len() as usize;
-<<<<<<< HEAD
+
         if offset + size > bytes.len() {
             break;
         }
 
-=======
->>>>>>> 62f665544760dc494dd6518dd010b42ff3c0a23b
+
         let raw_bytes = bytes[offset..offset + size].to_vec();
 
         let mut output = String::new();
