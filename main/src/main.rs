@@ -8,7 +8,7 @@ pub mod disassembler;
 
 pub mod parser;
 
-use disassembler::{DisasmOpts, Instruction, disasm};
+use disassembler::{DisasmOpts, disasm};
 use parser::TextSection;
 
 #[derive(Debug, Clone, Parser)]
