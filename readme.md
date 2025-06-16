@@ -18,30 +18,6 @@ The DeCompiler is a Rust-based binary analysis tool that provides disassembly, c
 - **Binary Parsing**: `scroll` - Binary parsing utilities
 - **Cross-platform Terminal**: `crossterm` - Terminal manipulation
 
-## Architecture
-
-### High-Level Architecture
-```
-┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│   Binary File   │───▶│     Parser      │───▶│  Disassembler   │
-│   (PE Format)   │    │  (extract .text)│    │   (iced_x86)    │
-└─────────────────┘    └─────────────────┘    └─────────────────┘
-                                                        │
-                              ┌─────────────────────────┼─────────────────────────┐
-                              │                         ▼                         │
-                              │                ┌─────────────────┐                │
-                              │                │ Control Flow    │                │
-                              │                │ Graph Builder   │                │
-                              │                └─────────────────┘                │
-                              │                         │                         │
-                              ▼                         ▼                         ▼
-                    ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-                    │  Terminal UI    │    │      TUI        │    │   Raw Output    │
-                    │  (ASCII Art)    │    │   (ratatui)     │    │   (stdout)      │
-                    └─────────────────┘    └─────────────────┘    └─────────────────┘
-```
-
-
 ## Installation & Setup
 
 ### Prerequisites
