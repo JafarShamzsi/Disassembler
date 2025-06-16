@@ -30,7 +30,7 @@ The DeCompiler is a Rust-based binary analysis tool that provides disassembly, c
 1. **Clone the Repository**
    ```bash
    git clone https://github.com/your-username/decompiler.git
-   cd decompiler/main
+   cd Disassembler/main
    ```
 
 2. **Build the Project**
