@@ -9,3 +9,5 @@ iced-x86 = "1.20"
 clap = { version = "4.3", features = ["derive"] }
 anyhow = "1.0"
 env_logger = "0.11"
+ratatui = "0.26"
+crossterm = "0.27"
