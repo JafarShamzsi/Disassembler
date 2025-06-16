@@ -29,7 +29,7 @@ The DeCompiler is a Rust-based binary analysis tool that provides disassembly, c
 
 1. **Clone the Repository**
    ```bash
-   git clone https://github.com/your-username/decompiler.git](https://github.com/JafarShamzsi/Disassembler.git
+   git clone https://github.com/JafarShamzsi/Disassembler.git
    cd Disassembler/main
    ```
 
@@ -95,20 +95,6 @@ cargo run -- --help
 ```
 
 ### TUI Mode Features
-
-#### Interface Layout
-```
-┌─────────────────── Decompiler ────────────────────┐
-│ [Instructions] [Control Flow] [Hex Dump]         │
-├───────────────────────────────────────────────────┤
-│                                                   │
-│  Main Content Area                                │
-│  (Changes based on selected tab)                  │
-│                                                   │
-├───────────────────────────────────────────────────┤
-│ Status: Instructions: 1234 | Selected: 5 | ...   │
-└───────────────────────────────────────────────────┘
-```
 
 #### Keyboard Shortcuts
 
