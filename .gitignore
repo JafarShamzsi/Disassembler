@@ -17,4 +17,4 @@ Session.vim
 .vs/
 .dir-locals.el
 ./main/target
-
+/target
