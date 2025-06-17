@@ -89,6 +89,86 @@ cargo run -- --tui --cfg /path/to/binary.exe
 cargo run -- --raw /path/to/binary.exe
 ```
 
+### Output Options
+```
+# Navigate to your project directory
+cd main
+
+# Basic export to JSON (format auto-detected from extension)
+cargo run -- --output analysis.json tests/notepad.exe
+
+# Export to CSV format
+cargo run -- --output data.csv tests/notepad.exe
+
+# Export to HTML with nice formatting
+cargo run -- --output report.html tests/notepad.exe
+
+# Export to Markdown
+cargo run -- --output readme.md tests/notepad.exe
+
+# Export to plain assembly text
+cargo run -- --output disasm.asm tests/notepad.exe
+```
+
+##### Export with Control Flow Graph
+```
+# Generate CFG and export to HTML (includes both instructions and CFG info)
+cargo run -- --cfg --output full_report.html tests/notepad.exe
+
+# Export CFG to DOT format for Graphviz visualization
+cargo run -- --cfg --format dot --output cfg.dot tests/notepad.exe
+
+# Generate PNG image from DOT file (requires Graphviz installed)
+dot -Tpng cfg.dot -o cfg.png
+```
+
+##### Manual Format Specification
+```
+# Force specific format (overrides file extension)
+cargo run -- --format json --output myfile.txt tests/notepad.exe
+
+# Export CFG data to JSON
+cargo run -- --cfg --format json --output cfg_data.json tests/notepad.exe
+```
+
+##### Export with TUI
+```
+# Launch TUI first
+cargo run -- --tui --cfg tests/notepad.exe
+```
+
+##### Create Graphviz Diagram
+```
+# Export CFG to DOT format
+cargo run -- --cfg --format dot --output program.dot tests/notepad.exe
+
+# Install Graphviz (if not already installed)
+# On Ubuntu/Debian: sudo apt install graphviz
+# On macOS: brew install graphviz
+# On Windows: Download from https://graphviz.org/ / or choco install graphviz
+
+# Generate visual diagram
+dot -Tpng program.dot -o program.png
+dot -Tsvg program.dot -o program.svg
+```
+##### Other methods for exporting
+```
+# Create different diagram types
+cargo run -- --cfg --format dot --output cfg.dot binary.exe
+
+# Generate various formats
+dot -Tpng cfg.dot -o cfg.png      # PNG image
+dot -Tsvg cfg.dot -o cfg.svg      # SVG vector
+dot -Tpdf cfg.dot -o cfg.pdf      # PDF document
+
+
+# Export to CSV for Excel import
+cargo run -- --output analysis.csv binary.exe
+
+# Export JSON for Python/Node.js processing
+cargo run -- --cfg --output data.json binary.exe
+```
+
 #### Help Information
 ```bash
 cargo run -- --help
