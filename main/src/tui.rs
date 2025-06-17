@@ -193,7 +193,7 @@ fn ui(f: &mut Frame, app: &mut App) {
     };
     
     let tabs = Tabs::new(tab_titles)
-        .block(Block::default().borders(Borders::ALL).title("Decompiler"))
+        .block(Block::default().borders(Borders::ALL).title("Sharingan Disassembler"))
         .select(selected_tab)
         .style(Style::default().fg(Color::Cyan))
         .highlight_style(Style::default().add_modifier(Modifier::BOLD).bg(Color::DarkGray));
