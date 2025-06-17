@@ -7,11 +7,13 @@ use clap::Parser;
 pub mod disassembler;
 pub mod parser;
 pub mod graph;
-pub mod tui; // Add this line
+pub mod tui;
+pub mod export; 
 
 use disassembler::{DisasmOpts, disasm};
 use parser::TextSection;
 use graph::{ControlFlowGraph, Instruction as CfgInstruction, Address};
+use export::{Exporter, ExportFormat, export_auto_format}; // Add this line
 
 #[derive(Debug, Clone, Parser)]
 pub struct Opts {
@@ -22,7 +24,13 @@ pub struct Opts {
     cfg: bool,
 
     #[clap(long)]
-    tui: bool, // Add this flag
+    tui: bool,
+
+    #[clap(long, short = 'o')]
+    output: Option<PathBuf>,
+
+    #[clap(long, short = 'f')]
+    format: Option<String>,
 
     #[clap(name = "FILE", value_parser)]
     files: Vec<PathBuf>,
@@ -65,7 +73,6 @@ fn main() -> io::Result<()> {
         let instructions = disasm(&bytes, disasm_opts);
         
         let cfg = if opts.cfg {
-            // Convert to CFG format and build control flow graph
             let cfg_instructions: Vec<CfgInstruction> = instructions.iter().map(|inst| {
                 CfgInstruction {
                     address: Address(inst.address),
@@ -82,32 +89,57 @@ fn main() -> io::Result<()> {
             None
         };
 
+        if let Some(output_path) = &opts.output {
+            let export_result = if let Some(format_str) = &opts.format {
+                let format = match format_str.to_lowercase().as_str() {
+                    "json" => ExportFormat::Json,
+                    "csv" => ExportFormat::Csv,
+                    "html" => ExportFormat::Html,
+                    "markdown" | "md" => ExportFormat::Markdown,
+                    "dot" => ExportFormat::Dot,
+                    "assembly" | "asm" => ExportFormat::Assembly,
+                    _ => {
+                        eprintln!("Unknown format: {}", format_str);
+                        std::process::exit(1);
+                    }
+                };
+                
+                match &cfg {
+                    Some(cfg) => Exporter::export_with_cfg(&instructions, cfg, format, output_path.to_str().unwrap()),
+                    None => Exporter::export_instructions(&instructions, format, output_path.to_str().unwrap()),
+                }
+            } else {
+                export_auto_format(&instructions, cfg.as_ref(), output_path.to_str().unwrap())
+            };
+
+            if let Err(e) = export_result {
+                eprintln!("Export failed: {}", e);
+                std::process::exit(1);
+            }
+        }
+
         if opts.tui {
-            // Launch TUI
             if let Err(e) = tui::run_tui(instructions, cfg) {
                 eprintln!("TUI error: {}", e);
                 std::process::exit(1);
             }
-        } else if opts.cfg {
-            // Terminal output for CFG
+        } else if opts.cfg && opts.output.is_none() {
             if let Some(cfg) = &cfg {
                 println!("\n=== Control Flow Analysis ===");
                 cfg.display_ascii();
             }
-        } else {
-            // Regular terminal output
+        } else if opts.output.is_none() {
             for inst in instructions {
                 println!("{}", inst);
             }
         }
 
-        println!(); // spacing between files
+        println!(); 
     }
 
     Ok(())
 }
 
-// Helper functions to parse instruction text
 fn extract_mnemonic(instruction_text: &str) -> String {
     instruction_text.split_whitespace()
         .next()

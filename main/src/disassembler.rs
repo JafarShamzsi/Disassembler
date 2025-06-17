@@ -33,20 +33,17 @@ pub fn disasm(bytes: &[u8], opts: DisasmOpts) -> Vec<Instruction> {
     while decoder.can_decode() {
         let instr = decoder.decode();
 
-        // Declare variables first
 
         let ip = instr.ip();
         let offset = (ip - opts.base_address) as usize;
         let size = instr.len() as usize;
 
-        // Check bounds
         if offset + size > bytes.len() {
             break;
         }
 
         let raw_bytes = bytes[offset..offset + size].to_vec();
 
-        // Format the instruction
         let mut output = String::new();
         let mut formatter = NasmFormatter::new();
         formatter.format(&instr, &mut output);
