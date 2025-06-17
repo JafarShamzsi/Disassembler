@@ -18,3 +18,5 @@ Session.vim
 .dir-locals.el
 ./main/target
 /target
+/main/target/debug
+/main/target
