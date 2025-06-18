@@ -15,7 +15,7 @@ use ratatui::{
 };
 use std::io;
 
-use crate::disassembler::Instruction;
+use crate::arch::x86::Instruction;
 use crate::graph::ControlFlowGraph;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -34,14 +34,20 @@ pub struct App {
     pub selected_instruction: Option<usize>,
     pub scroll_offset: usize,
     pub show_help: bool,
-    // Add these new fields:
     pub search_mode: bool,
     pub search_query: String,
-    pub filtered_instructions: Vec<usize>, // Indices of filtered instructions
+    pub filtered_instructions: Vec<usize>,
+    pub instruction_display_cache: Vec<String>,  
+    pub last_search_query: String,               
 }
 
 impl App {
     pub fn new(instructions: Vec<Instruction>, cfg: Option<ControlFlowGraph>) -> Self {
+        let instruction_display_cache: Vec<String> = instructions
+            .iter()
+            .map(|instr| format!("{:#08x}: {}", instr.address, instr.text))
+            .collect();
+
         let mut app = Self {
             instructions,
             cfg,
@@ -53,12 +59,13 @@ impl App {
             search_mode: false,
             search_query: String::new(),
             filtered_instructions: Vec::new(),
+            instruction_display_cache,
+            last_search_query: String::new(),
         };
         
         if !app.instructions.is_empty() {
             app.instruction_list_state.select(Some(0));
             app.selected_instruction = Some(0);
-            // Initialize filtered instructions with all indices
             app.filtered_instructions = (0..app.instructions.len()).collect();
         }
         
@@ -74,7 +81,6 @@ impl App {
             let next_pos = (current_pos + 1).min(self.filtered_instructions.len().saturating_sub(1));
             self.instruction_list_state.select(Some(next_pos));
             
-            // Update selected instruction safely
             if let Some(&instruction_idx) = self.filtered_instructions.get(next_pos) {
                 if instruction_idx < self.instructions.len() {
                     self.selected_instruction = Some(instruction_idx);
@@ -92,7 +98,6 @@ impl App {
             let prev_pos = current_pos.saturating_sub(1);
             self.instruction_list_state.select(Some(prev_pos));
             
-            // Update selected instruction safely
             if let Some(&instruction_idx) = self.filtered_instructions.get(prev_pos) {
                 if instruction_idx < self.instructions.len() {
                     self.selected_instruction = Some(instruction_idx);
@@ -141,17 +146,24 @@ impl App {
     }
 
     fn apply_filter(&mut self) {
+        // Only rebuild if search query actually changed
+        if self.search_query == self.last_search_query {
+            return;
+        }
+        
+        self.last_search_query = self.search_query.clone();
+        
         if self.search_query.is_empty() {
             self.filtered_instructions = (0..self.instructions.len()).collect();
         } else {
-            self.filtered_instructions = self.instructions
-                .iter()
-                .enumerate()
-                .filter(|(_, instr)| {
-                    instr.text.to_lowercase().contains(&self.search_query.to_lowercase()) ||
-                    format!("{:#08x}", instr.address).contains(&self.search_query)
+            // Pre-lowercase search query once
+            let search_lower = self.search_query.to_lowercase();
+            
+            self.filtered_instructions = (0..self.instructions.len())
+                .filter(|&i| {
+                    // Use cached display strings instead of formatting
+                    self.instruction_display_cache[i].to_lowercase().contains(&search_lower)
                 })
-                .map(|(i, _)| i)
                 .collect();
         }
         
@@ -202,50 +214,67 @@ fn run_app<B: Backend>(
     terminal: &mut Terminal<B>,
     mut app: App,
 ) -> io::Result<()> {
+    let mut last_tick = std::time::Instant::now();
+    let tick_rate = std::time::Duration::from_millis(16); // 60 FPS limit
+    
     loop {
-        terminal.draw(|f| ui(f, &mut app))?;
+        let timeout = tick_rate.saturating_sub(last_tick.elapsed());
+        let should_draw = last_tick.elapsed() >= tick_rate;
+        
+        // Only draw if enough time has passed
+        if should_draw {
+            terminal.draw(|f| ui(f, &mut app))?;
+            last_tick = std::time::Instant::now();
+        }
 
-        if let Event::Key(key) = event::read()? {
-            if key.kind == KeyEventKind::Press {
-                if app.search_mode {
-                    match key.code {
-                        KeyCode::Esc => app.exit_search_mode(),
-                        KeyCode::Enter => app.exit_search_mode(),
-                        KeyCode::Backspace => {
-                            app.search_query.pop();
-                            app.apply_filter();
-                        },
-                        KeyCode::Char(c) => {
-                            app.search_query.push(c);
-                            app.apply_filter();
-                        },
-                        _ => {}
+        if event::poll(timeout)? {
+            if let Event::Key(key) = event::read()? {
+                if key.kind == KeyEventKind::Press {
+                    // Handle key events...
+                    if app.search_mode {
+                        match key.code {
+                            KeyCode::Esc => app.exit_search_mode(),
+                            KeyCode::Enter => app.exit_search_mode(),
+                            KeyCode::Backspace => {
+                                app.search_query.pop();
+                                app.apply_filter();
+                            },
+                            KeyCode::Char(c) => {
+                                app.search_query.push(c);
+                                app.apply_filter();
+                            },
+                            _ => {}
+                        }
+                    } else {
+                        match key.code {
+                            KeyCode::Char('q') => return Ok(()),
+                            KeyCode::Char('h') | KeyCode::F(1) => app.toggle_help(),
+                            KeyCode::Char('/') => app.enter_search_mode(),
+                            KeyCode::Down | KeyCode::Char('j') => app.next_instruction(),
+                            KeyCode::Up | KeyCode::Char('k') => app.previous_instruction(),
+                            KeyCode::Tab => app.next_tab(),
+                            KeyCode::BackTab => app.previous_tab(),
+                            KeyCode::Char('1') => app.current_tab = Tab::Instructions,
+                            KeyCode::Char('2') => app.current_tab = Tab::ControlFlow,
+                            KeyCode::Char('3') => app.current_tab = Tab::GraphAnalysis,
+                            KeyCode::Char('4') => app.current_tab = Tab::HexDump,
+                            KeyCode::PageDown => {
+                                for _ in 0..10 {
+                                    app.next_instruction();
+                                }
+                            },
+                            KeyCode::PageUp => {
+                                for _ in 0..10 {
+                                    app.previous_instruction();
+                                }
+                            },
+                            _ => {}
+                        }
                     }
-                } else {
-                    match key.code {
-                        KeyCode::Char('q') => return Ok(()),
-                        KeyCode::Char('h') | KeyCode::F(1) => app.toggle_help(),
-                        KeyCode::Char('/') => app.enter_search_mode(),
-                        KeyCode::Down | KeyCode::Char('j') => app.next_instruction(),
-                        KeyCode::Up | KeyCode::Char('k') => app.previous_instruction(),
-                        KeyCode::Tab => app.next_tab(),
-                        KeyCode::BackTab => app.previous_tab(),
-                        KeyCode::Char('1') => app.current_tab = Tab::Instructions,
-                        KeyCode::Char('2') => app.current_tab = Tab::ControlFlow,
-                        KeyCode::Char('3') => app.current_tab = Tab::GraphAnalysis,
-                        KeyCode::Char('4') => app.current_tab = Tab::HexDump,
-                        KeyCode::PageDown => {
-                            for _ in 0..10 {
-                                app.next_instruction();
-                            }
-                        },
-                        KeyCode::PageUp => {
-                            for _ in 0..10 {
-                                app.previous_instruction();
-                            }
-                        },
-                        _ => {}
-                    }
+                    
+                    // Force immediate redraw after user input
+                    terminal.draw(|f| ui(f, &mut app))?;
+                    last_tick = std::time::Instant::now();
                 }
             }
         }
@@ -313,21 +342,26 @@ fn render_instructions(f: &mut Frame, app: &mut App, area: Rect) {
         .constraints([Constraint::Percentage(60), Constraint::Percentage(40)])
         .split(area);
 
-    // Instruction list
-    let instructions: Vec<ListItem> = app
-        .filtered_instructions
+    // VIEWPORT OPTIMIZATION: Only render visible instructions
+    let visible_start = app.instruction_list_state.selected().unwrap_or(0).saturating_sub(50);
+    let visible_end = (visible_start + 100).min(app.filtered_instructions.len());
+    
+    let instructions: Vec<ListItem> = app.filtered_instructions[visible_start..visible_end]
         .iter()
         .enumerate()
-        .map(|(_i, &instr_idx)| {
-            let instr = &app.instructions[instr_idx];
-            let style = if Some(instr_idx) == app.selected_instruction {
+        .map(|(list_idx, &instr_idx)| {
+            let actual_idx = visible_start + list_idx;
+            let is_selected = app.instruction_list_state.selected() == Some(actual_idx);
+            
+            let style = if is_selected {
                 Style::default().bg(Color::DarkGray).add_modifier(Modifier::BOLD)
             } else {
                 Style::default()
             };
             
-            let content = format!("{:#08x}: {}", instr.address, instr.text);
-            ListItem::new(Line::from(Span::styled(content, style)))
+            // USE CACHED STRING - NO FORMATTING!
+            let content = &app.instruction_display_cache[instr_idx];
+            ListItem::new(Line::from(Span::styled(content.clone(), style)))
         })
         .collect();
 
@@ -337,8 +371,6 @@ fn render_instructions(f: &mut Frame, app: &mut App, area: Rect) {
         .highlight_symbol("> ");
 
     f.render_stateful_widget(instructions_list, chunks[0], &mut app.instruction_list_state);
-
-    // Instruction details
     render_instruction_details(f, app, chunks[1]);
 }
 
@@ -590,37 +622,38 @@ fn render_hex_dump(f: &mut Frame, app: &App, area: Rect) {
 
     let content = if let Some(selected_idx) = app.selected_instruction {
         if selected_idx < app.instructions.len() && !app.instructions.is_empty() {
-            let context_size = 8;
+            // REDUCED context size for performance
+            let context_size = 4; // Reduced from 8
             let start_idx = selected_idx.saturating_sub(context_size);
-            // Fixed: Use saturating_add to prevent overflow
             let end_idx = selected_idx.saturating_add(context_size).saturating_add(1).min(app.instructions.len());
             
-            // Ensure we have a valid range
             if start_idx < app.instructions.len() && 
                end_idx <= app.instructions.len() && 
                start_idx < end_idx {
                 
-                let mut hex_lines = Vec::new();
-                let mut ascii_lines = Vec::new();
+                // PRE-ALLOCATE with capacity
+                let mut hex_lines = Vec::with_capacity(end_idx - start_idx);
+                let mut ascii_lines = Vec::with_capacity(end_idx - start_idx);
                 
-                // Safe iteration over the range
                 for (offset, inst) in app.instructions[start_idx..end_idx].iter().enumerate() {
-                    // Use saturating_add here too for extra safety
-                    let actual_idx = start_idx.saturating_add(offset);
+                    let actual_idx = start_idx + offset;
                     let is_selected = actual_idx == selected_idx;
                     
-                    // Format hex bytes (16 bytes per line max)
-                    let bytes_str = inst.bytes.iter()
-                        .take(16)
-                        .map(|b| format!("{:02x}", b))
-                        .collect::<Vec<_>>()
-                        .join(" ");
+                    // LIMIT bytes to prevent excessive formatting
+                    let bytes_to_show = inst.bytes.iter().take(8); // Reduced from 16
                     
-                    // Format ASCII representation
-                    let ascii_str: String = inst.bytes.iter()
-                        .take(16)
-                        .map(|&b| if b.is_ascii_graphic() || b == b' ' { b as char } else { '.' })
-                        .collect();
+                    // PRE-ALLOCATE string capacity
+                    let mut bytes_str = String::with_capacity(24);
+                    for (i, b) in bytes_to_show.enumerate() {
+                        if i > 0 { bytes_str.push(' '); }
+                        bytes_str.push_str(&format!("{:02x}", b));
+                    }
+                    
+                    // ASCII with capacity
+                    let mut ascii_str = String::with_capacity(8);
+                    for &b in inst.bytes.iter().take(8) {
+                        ascii_str.push(if b.is_ascii_graphic() || b == b' ' { b as char } else { '.' });
+                    }
                     
                     let style = if is_selected {
                         Style::default().bg(Color::Blue).fg(Color::White)
@@ -630,7 +663,7 @@ fn render_hex_dump(f: &mut Frame, app: &App, area: Rect) {
                     
                     hex_lines.push(ListItem::new(Line::from(vec![
                         Span::styled(format!("{:#08x}: ", inst.address), Style::default().fg(Color::Yellow)),
-                        Span::styled(format!("{:<48}", bytes_str), style),
+                        Span::styled(format!("{:<24}", bytes_str), style),
                     ])));
                     
                     ascii_lines.push(ListItem::new(Line::from(
@@ -649,14 +682,12 @@ fn render_hex_dump(f: &mut Frame, app: &App, area: Rect) {
         (vec![ListItem::new("No instruction selected")], vec![])
     };
 
-    // Render hex view
     let hex_list = List::new(content.0)
         .block(Block::default().borders(Borders::ALL).title("Hex View"))
         .style(Style::default().fg(Color::White));
 
     f.render_widget(hex_list, chunks[0]);
 
-    // Render ASCII view
     let ascii_list = List::new(content.1)
         .block(Block::default().borders(Borders::ALL).title("ASCII"))
         .style(Style::default().fg(Color::White));

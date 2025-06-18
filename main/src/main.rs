@@ -1,16 +1,18 @@
 use std::fs::File;
 use std::io::{self, BufReader, Read};
 use std::path::PathBuf;
-
 use clap::{Arg, Command};
 
-pub mod disassembler;
+// Clean module declarations
+pub mod arch;
 pub mod parser;
 pub mod graph;
 pub mod tui;
 pub mod export;
 
-use disassembler::{DisasmOpts, disasm};
+pub use crate::arch::x86::Instruction;
+// Simple, clean imports
+use arch::x86::{DisasmOpts, disasm};  // Use the legacy functions directly
 use parser::TextSection;
 use graph::{ControlFlowGraph, Instruction as CfgInstruction, Address};
 use export::{Exporter, ExportFormat, export_auto_format};
@@ -76,30 +78,24 @@ impl Opts {
 }
 
 fn main() -> io::Result<()> {
-    env_logger::init();
-
     let opts = Opts::parse();
-    if opts.files.is_empty() {
-        eprintln!("No files provided");
-        std::process::exit(1);
-    }
 
-    for path in &opts.files {
+    for file_path in &opts.files {
         // Only show loading messages if not launching TUI
         if !opts.tui {
-            println!("[ANALYZING] {}", path.display());
+            println!("[ANALYZING] {}", file_path.display());
             println!("{}", "=".repeat(60));
         }
 
         let data = {
-            let mut f = BufReader::new(File::open(path)?);
+            let mut f = BufReader::new(File::open(file_path)?);
             let mut buf = Vec::new();
             f.read_to_end(&mut buf)?;
             buf
         };
 
         let TextSection { va, bytes } = parser::get_text_section(&data).unwrap_or_else(|e| {
-            eprintln!("{}: failed to parse .text: {}", path.display(), e);
+            eprintln!("{}: failed to parse .text: {}", file_path.display(), e);
             std::process::exit(1);
         });
 
@@ -112,7 +108,7 @@ fn main() -> io::Result<()> {
             bitness: 64,
         };
 
-        let instructions = disasm(&bytes, disasm_opts);
+        let instructions = disasm(&bytes, disasm_opts);  // Simple call
         
         if !opts.tui {
             println!("[INFO] Disassembled {} instructions", instructions.len());

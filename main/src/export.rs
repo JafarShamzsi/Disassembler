@@ -1,4 +1,5 @@
-use crate::disassembler::Instruction;
+use arch::x86::Instruction;
+use crate::arch;
 use crate::graph::ControlFlowGraph;
 use serde::{Deserialize, Serialize};
 use std::fs::File;
