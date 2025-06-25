@@ -1,4 +1,4 @@
-use super::{ArchDisassembler, Architecture, ArchConfig, Instruction};
+use super::{ArchConfig, ArchDisassembler, Architecture, Instruction};
 
 pub struct ARMDisassembler;
 
@@ -23,12 +23,30 @@ impl ArchDisassembler for ARMDisassembler {
 
     fn detect_jumps(&self, instruction: &str) -> bool {
         let mnemonic = instruction.split_whitespace().next().unwrap_or("");
-        matches!(mnemonic, "b" | "beq" | "bne" | "bcs" | "bhs" | "bcc" | "blo" | 
-                          "bmi" | "bpl" | "bvs" | "bvc" | "bhi" | "bls" | "bge" | 
-                          "blt" | "bgt" | "ble" | "bal")
+        matches!(
+            mnemonic,
+            "b" | "beq"
+                | "bne"
+                | "bcs"
+                | "bhs"
+                | "bcc"
+                | "blo"
+                | "bmi"
+                | "bpl"
+                | "bvs"
+                | "bvc"
+                | "bhi"
+                | "bls"
+                | "bge"
+                | "blt"
+                | "bgt"
+                | "ble"
+                | "bal"
+        )
     }
 
     fn detect_returns(&self, instruction: &str) -> bool {
-        instruction.contains("lr") && (instruction.starts_with("bx") || instruction.starts_with("mov pc"))
+        instruction.contains("lr")
+            && (instruction.starts_with("bx") || instruction.starts_with("mov pc"))
     }
 }

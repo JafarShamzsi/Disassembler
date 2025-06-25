@@ -41,5 +41,5 @@ pub trait ArchDisassembler {
 }
 
 // Module declarations
-pub mod x86;  // This is our main x86 implementation
-pub mod arm;        // Placeholder for future
+pub mod arm;
+pub mod x86; // This is our main x86 implementation // Placeholder for future

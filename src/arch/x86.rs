@@ -1,5 +1,4 @@
-
-use iced_x86::{Decoder, DecoderOptions, NasmFormatter, Formatter};
+use iced_x86::{Decoder, DecoderOptions, Formatter, NasmFormatter};
 use std::fmt;
 
 #[derive(Debug, Clone)]
@@ -23,7 +22,8 @@ pub struct DisasmOpts {
 
 pub fn disasm(bytes: &[u8], opts: DisasmOpts) -> Vec<Instruction> {
     // Your existing implementation - keep it as-is
-    let mut decoder = Decoder::with_ip(opts.bitness, bytes, opts.base_address, DecoderOptions::NONE);
+    let mut decoder =
+        Decoder::with_ip(opts.bitness, bytes, opts.base_address, DecoderOptions::NONE);
     let mut instructions = Vec::new();
 
     while decoder.can_decode() {
@@ -52,7 +52,7 @@ pub fn disasm(bytes: &[u8], opts: DisasmOpts) -> Vec<Instruction> {
 }
 
 // Architecture trait implementation
-use super::{ArchDisassembler, Architecture, ArchConfig};
+use super::{ArchConfig, ArchDisassembler, Architecture};
 
 pub struct X86Disassembler;
 
@@ -79,8 +79,28 @@ impl ArchDisassembler for X86Disassembler {
 
     fn detect_jumps(&self, instruction: &str) -> bool {
         let mnemonic = instruction.split_whitespace().next().unwrap_or("");
-        matches!(mnemonic, "jmp" | "je" | "jne" | "jz" | "jnz" | "ja" | "jb" | "jae" | "jbe" | 
-                          "jg" | "jl" | "jge" | "jle" | "jo" | "jno" | "js" | "jns" | "jp" | "jnp")
+        matches!(
+            mnemonic,
+            "jmp"
+                | "je"
+                | "jne"
+                | "jz"
+                | "jnz"
+                | "ja"
+                | "jb"
+                | "jae"
+                | "jbe"
+                | "jg"
+                | "jl"
+                | "jge"
+                | "jle"
+                | "jo"
+                | "jno"
+                | "js"
+                | "jns"
+                | "jp"
+                | "jnp"
+        )
     }
 
     fn detect_returns(&self, instruction: &str) -> bool {

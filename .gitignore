@@ -1,22 +1,46 @@
-.idea
-.DS_Store
-desktop.ini
-*.swp
-*.swo
-Session.vim
-.cproject
-.idea
-*.iml
-.vscode
+# IDE
+.idea/
+.vscode/
 .project
+.cproject
+.settings/
+.vs/
+Session.vim
 .vim/
 .helix/
 .zed/
 .favorites.json
-.settings/
-.vs/
 .dir-locals.el
-./main/target
-/target
-/main/target/debug
-/main/target
+*.iml
+
+# OS
+.DS_Store
+desktop.ini
+Thumbs.db
+*.swp
+*.swo
+
+# Rust
+/target/
+/main/target/
+**/*.rs.bk
+*.pdb
+
+# Test outputs and artifacts
+*.json
+*.csv
+*.html
+*.dot
+*.md.backup
+report.html
+test_output*
+tui_output*
+*.tmp
+*.temp
+*.log
+
+# Build artifacts
+simple_test.exe
+
+# Documentation builds
+*.pdf
