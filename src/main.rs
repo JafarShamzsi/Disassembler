@@ -25,22 +25,16 @@ pub struct Opts {
     pub cfg: bool,
     pub tui: bool,
 
-    /// Export to file (format auto-detected from extension)
     pub output: Option<PathBuf>,
 
-    /// Export format (json, csv, html, markdown, dot, assembly)
     pub format: Option<String>,
 
-    /// Show detailed CFG analysis
     pub detailed: bool,
 
-    /// Show only graph metrics
     pub metrics: bool,
 
-    /// Show function analysis
     pub functions: bool,
 
-    /// Show loop analysis
     pub loops: bool,
 
     pub files: Vec<PathBuf>,
