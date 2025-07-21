@@ -21,7 +21,6 @@ pub struct DisasmOpts {
 }
 
 pub fn disasm(bytes: &[u8], opts: DisasmOpts) -> Vec<Instruction> {
-    // Your existing implementation - keep it as-is
     let mut decoder =
         Decoder::with_ip(opts.bitness, bytes, opts.base_address, DecoderOptions::NONE);
     let mut instructions = Vec::new();
