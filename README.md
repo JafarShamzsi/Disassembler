@@ -59,6 +59,14 @@ cargo build --release
 ```bash
 ./target/release/main binary.exe --tui
 ```
+#### Screenshots
+
+<img width="1917" height="1064" alt="Screenshot From 2025-08-03 22-55-22" src="https://github.com/user-attachments/assets/b6f62fcb-faf8-41e7-9b75-7ec53cdfe468" />
+<img width="1917" height="1064" alt="Screenshot From 2025-08-03 22-55-30" src="https://github.com/user-attachments/assets/b1794b56-3fa9-46da-9afb-110ccd300898" />
+<img width="1917" height="1064" alt="Screenshot From 2025-08-03 22-55-38" src="https://github.com/user-attachments/assets/b90f5ab6-fcaf-4da7-a23b-23a58989f254" />
+<img width="1917" height="1064" alt="Screenshot From 2025-08-03 22-55-46" src="https://github.com/user-attachments/assets/4bf0503f-7f4c-469b-8b0e-6d70a5d33d4a" />
+<img width="1917" height="1064" alt="Screenshot From 2025-08-03 22-55-50" src="https://github.com/user-attachments/assets/8f2904ee-4b1b-4e56-9d18-8d633de252d8" />
+
 
 **TUI Controls:**
 - `Tab`: Switch between views
