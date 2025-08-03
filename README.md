@@ -62,10 +62,10 @@ cargo build --release
 #### Screenshots
 
 <img width="1917" height="1064" alt="Screenshot From 2025-08-03 22-55-22" src="https://github.com/user-attachments/assets/b6f62fcb-faf8-41e7-9b75-7ec53cdfe468" />
-<img width="1917" height="1064" alt="Screenshot From 2025-08-03 22-55-30" src="https://github.com/user-attachments/assets/b1794b56-3fa9-46da-9afb-110ccd300898" />
-<img width="1917" height="1064" alt="Screenshot From 2025-08-03 22-55-38" src="https://github.com/user-attachments/assets/b90f5ab6-fcaf-4da7-a23b-23a58989f254" />
-<img width="1917" height="1064" alt="Screenshot From 2025-08-03 22-55-46" src="https://github.com/user-attachments/assets/4bf0503f-7f4c-469b-8b0e-6d70a5d33d4a" />
-<img width="1917" height="1064" alt="Screenshot From 2025-08-03 22-55-50" src="https://github.com/user-attachments/assets/8f2904ee-4b1b-4e56-9d18-8d633de252d8" />
+<img width="1917" height="1064" alt="Screenshot From 2025-08-03 23-20-28" src="https://github.com/user-attachments/assets/b56dcafc-b54c-40b8-9d8c-2a51eaa9771f" />
+<img width="1917" height="1064" alt="Screenshot From 2025-08-03 23-20-38" src="https://github.com/user-attachments/assets/1cb32bdf-e6f3-4e28-8fb0-432c91811873" />
+<img width="1917" height="1064" alt="Screenshot From 2025-08-03 23-20-47" src="https://github.com/user-attachments/assets/c6e7304b-1b30-4675-90f1-c48f916d2dc9" />
+<img width="1917" height="1064" alt="Screenshot From 2025-08-03 23-21-20" src="https://github.com/user-attachments/assets/00474c98-1a22-4c93-9b55-82c5fde9b2dd" />
 
 
 **TUI Controls:**
