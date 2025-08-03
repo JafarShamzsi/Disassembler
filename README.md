@@ -4,25 +4,25 @@ A modern, feature-rich binary disassembler written in Rust with an interactive T
 
 ## Features
 
-### 🔍 **Disassembly Engine**
+### **Disassembly Engine**
 - **Multi-architecture support**: x86/x86-64 with extensible architecture framework
 - **Binary format parsing**: PE, ELF, and other formats via goblin
 - **Instruction analysis**: Comprehensive instruction decoding using iced-x86
 - **Section analysis**: Automatic .text section extraction and analysis
 
-### 📊 **Control Flow Graph (CFG)**
+### **Control Flow Graph (CFG)**
 - **Advanced block detection**: Smart basic block identification with jump/call target analysis
 - **Graph metrics**: Cyclomatic complexity, branching factor, block statistics
 - **Multiple layouts**: Grid layout for large graphs with viewport navigation
 - **Export support**: JSON, CSV, HTML, Markdown, DOT, and Assembly formats
 
-### 🖥️ **Interactive TUI**
+### **Interactive TUI**
 - **Multi-tab interface**: Instructions, Control Flow, Graph View, Hex Dump
 - **Graph navigation**: Arrow key navigation between connected blocks
 - **Search functionality**: Fast instruction search with filtering
 - **Viewport controls**: Pan (WASD), zoom (+/-), center (C)
 
-### 📈 **Analysis Features**
+### **Analysis Features**
 - **Function analysis**: Basic block and edge analysis
 - **Loop detection**: Back-edge based loop identification
 - **Metrics calculation**: Comprehensive graph statistics
@@ -180,7 +180,3 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 - **petgraph**: Robust graph algorithms
 - **ratatui**: Modern terminal UI framework
 - **goblin**: Comprehensive binary parsing
-
----
-
-**Status**: ✅ Production Ready - Modern disassembler with advanced CFG visualization
