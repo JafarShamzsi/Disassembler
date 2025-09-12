@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod tests {
-    use main::parser::get_text_section;
+    use disassembler::parser::get_text_section;
     use std::fs;
 
     #[test]
