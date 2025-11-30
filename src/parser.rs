@@ -6,7 +6,7 @@ pub struct TextSection<'a> {
     pub bytes: &'a [u8],
 }
 
-pub fn get_text_section(data: &[u8]) -> Result<TextSection> {
+pub fn get_text_section(data: &[u8]) -> Result<TextSection<'_>> {
     match Object::parse(data)? {
         Object::PE(pe) => {
             let base = pe.image_base as u64;
