@@ -187,8 +187,7 @@ fn main() -> io::Result<()> {
                 eprintln!("[ERROR] TUI error: {}", e);
                 std::process::exit(1);
             }
-            // Force exit after TUI to prevent any background issues
-            std::process::exit(0);
+            return Ok(());
         }
 
         // Handle different display modes (only when NOT using TUI)

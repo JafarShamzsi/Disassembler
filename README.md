@@ -107,7 +107,7 @@ cargo build --release
 - **`src/arch/`**: Architecture-specific disassembly engines
 - **`src/graph.rs`**: Control flow graph construction using petgraph
 - **`src/graph_view.rs`**: Graph layout and viewport management
-- **`src/tui.rs`**: Interactive terminal user interface
+- **`src/tui/`**: Interactive terminal user interface, split into app state, input, session, and views modules
 - **`src/export.rs`**: Multi-format export functionality
 
 ### Dependencies

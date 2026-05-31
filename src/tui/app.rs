@@ -1,0 +1,486 @@
+use ratatui::widgets::ListState;
+
+use crate::arch::x86::Instruction;
+use crate::graph::{Address, ControlFlowGraph, EdgeType, FunctionSummary};
+use crate::graph_renderer::GraphRenderer;
+use crate::graph_view::GraphView;
+use crate::parser::{BinaryAnalysis, ImportSummary, StringSummary, SymbolSummary};
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Tab {
+    Instructions,
+    Functions,
+    Names,
+    Xrefs,
+    ControlFlow,
+    GraphView,
+    HexDump,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NameItem {
+    Import(ImportSummary),
+    Symbol(SymbolSummary),
+    String(StringSummary),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct XrefItem {
+    pub from: Address,
+    pub to: Address,
+    pub edge_type: EdgeType,
+}
+
+impl XrefItem {
+    pub(crate) fn kind(&self) -> &'static str {
+        match self.edge_type {
+            EdgeType::Call => "call",
+            EdgeType::ConditionalTrue => "true",
+            EdgeType::ConditionalFalse => "false",
+            EdgeType::Unconditional => "jump",
+            EdgeType::Return => "return",
+        }
+    }
+}
+
+impl NameItem {
+    pub(crate) fn address(&self) -> Option<u64> {
+        match self {
+            NameItem::Import(import) => import.address,
+            NameItem::Symbol(symbol) => symbol.address,
+            NameItem::String(string) => Some(string.address),
+        }
+    }
+
+    pub(crate) fn kind(&self) -> &'static str {
+        match self {
+            NameItem::Import(_) => "import",
+            NameItem::Symbol(symbol) => symbol.kind.as_str(),
+            NameItem::String(_) => "string",
+        }
+    }
+
+    pub(crate) fn label(&self) -> String {
+        match self {
+            NameItem::Import(import) => {
+                let library = import.library.as_deref().unwrap_or("unknown");
+                format!("{library}!{}", import.name)
+            }
+            NameItem::Symbol(symbol) => symbol.name.clone(),
+            NameItem::String(string) => truncate_for_display(&string.value, 72),
+        }
+    }
+}
+
+pub struct App {
+    pub instructions: Vec<Instruction>,
+    pub cfg: Option<ControlFlowGraph>,
+    pub analysis: BinaryAnalysis,
+    pub current_tab: Tab,
+    pub instruction_list_state: ListState,
+    pub function_list_state: ListState,
+    pub name_list_state: ListState,
+    pub xref_list_state: ListState,
+    pub selected_instruction: Option<usize>,
+    pub selected_function: Option<usize>,
+    pub selected_name: Option<usize>,
+    pub selected_xref: Option<usize>,
+    pub scroll_offset: usize,
+    pub show_help: bool,
+    pub search_mode: bool,
+    pub search_query: String,
+    pub filtered_instructions: Vec<usize>,
+    pub instruction_display_cache: Vec<String>,
+    pub last_search_query: String,
+    pub functions: Vec<FunctionSummary>,
+    pub names: Vec<NameItem>,
+    pub xrefs: Vec<XrefItem>,
+    pub graph_view: GraphView,
+    pub graph_renderer: GraphRenderer,
+}
+
+impl App {
+    pub fn new(
+        instructions: Vec<Instruction>,
+        cfg: Option<ControlFlowGraph>,
+        analysis: BinaryAnalysis,
+    ) -> Self {
+        let instruction_display_cache: Vec<String> = instructions
+            .iter()
+            .map(|instr| format!("{:#08x}: {}", instr.address, instr.text))
+            .collect();
+
+        let mut graph_view = GraphView::new();
+        let functions = cfg
+            .as_ref()
+            .map(ControlFlowGraph::function_summaries)
+            .unwrap_or_default();
+        let names = build_name_items(&analysis);
+        let xrefs = cfg.as_ref().map(build_xref_items).unwrap_or_default();
+
+        // Initialize graph view with CFG if available
+        if let Some(ref cfg) = cfg {
+            graph_view.build_from_cfg(cfg);
+        }
+
+        let mut app = Self {
+            instructions,
+            cfg,
+            analysis,
+            current_tab: Tab::Instructions,
+            instruction_list_state: ListState::default(),
+            function_list_state: ListState::default(),
+            name_list_state: ListState::default(),
+            xref_list_state: ListState::default(),
+            selected_instruction: None,
+            selected_function: None,
+            selected_name: None,
+            selected_xref: None,
+            scroll_offset: 0,
+            show_help: false,
+            search_mode: false,
+            search_query: String::new(),
+            filtered_instructions: Vec::new(),
+            instruction_display_cache,
+            last_search_query: String::new(),
+            functions,
+            names,
+            xrefs,
+            graph_view,
+            graph_renderer: GraphRenderer::default(),
+        };
+
+        if !app.instructions.is_empty() {
+            app.instruction_list_state.select(Some(0));
+            app.selected_instruction = Some(0);
+            app.filtered_instructions = (0..app.instructions.len()).collect();
+        }
+
+        if !app.functions.is_empty() {
+            app.function_list_state.select(Some(0));
+            app.selected_function = Some(0);
+        }
+
+        if !app.names.is_empty() {
+            app.name_list_state.select(Some(0));
+            app.selected_name = Some(0);
+        }
+
+        if !app.xrefs.is_empty() {
+            app.xref_list_state.select(Some(0));
+            app.selected_xref = Some(0);
+        }
+
+        app
+    }
+
+    pub fn next_instruction(&mut self) {
+        if self.filtered_instructions.is_empty() {
+            return;
+        }
+
+        if let Some(current_pos) = self.instruction_list_state.selected() {
+            let next_pos =
+                (current_pos + 1).min(self.filtered_instructions.len().saturating_sub(1));
+            self.instruction_list_state.select(Some(next_pos));
+
+            if let Some(&instruction_idx) = self.filtered_instructions.get(next_pos) {
+                if instruction_idx < self.instructions.len() {
+                    self.selected_instruction = Some(instruction_idx);
+                }
+            }
+        }
+    }
+
+    pub fn previous_instruction(&mut self) {
+        if self.filtered_instructions.is_empty() {
+            return;
+        }
+
+        if let Some(current_pos) = self.instruction_list_state.selected() {
+            let prev_pos = current_pos.saturating_sub(1);
+            self.instruction_list_state.select(Some(prev_pos));
+
+            if let Some(&instruction_idx) = self.filtered_instructions.get(prev_pos) {
+                if instruction_idx < self.instructions.len() {
+                    self.selected_instruction = Some(instruction_idx);
+                }
+            }
+        }
+    }
+
+    pub fn next_tab(&mut self) {
+        self.current_tab = match self.current_tab {
+            Tab::Instructions => Tab::Functions,
+            Tab::Functions => Tab::Names,
+            Tab::Names => Tab::Xrefs,
+            Tab::Xrefs => Tab::ControlFlow,
+            Tab::ControlFlow => Tab::GraphView,
+            Tab::GraphView => Tab::HexDump,
+            Tab::HexDump => Tab::Instructions,
+        };
+    }
+
+    pub fn previous_tab(&mut self) {
+        self.current_tab = match self.current_tab {
+            Tab::Instructions => Tab::HexDump,
+            Tab::Functions => Tab::Instructions,
+            Tab::Names => Tab::Functions,
+            Tab::Xrefs => Tab::Names,
+            Tab::ControlFlow => Tab::Xrefs,
+            Tab::GraphView => Tab::ControlFlow,
+            Tab::HexDump => Tab::GraphView,
+        };
+    }
+
+    pub fn next_function(&mut self) {
+        if self.functions.is_empty() {
+            return;
+        }
+
+        if let Some(current) = self.function_list_state.selected() {
+            let next = (current + 1).min(self.functions.len().saturating_sub(1));
+            self.function_list_state.select(Some(next));
+            self.selected_function = Some(next);
+        }
+    }
+
+    pub fn previous_function(&mut self) {
+        if self.functions.is_empty() {
+            return;
+        }
+
+        if let Some(current) = self.function_list_state.selected() {
+            let previous = current.saturating_sub(1);
+            self.function_list_state.select(Some(previous));
+            self.selected_function = Some(previous);
+        }
+    }
+
+    pub fn next_name(&mut self) {
+        if self.names.is_empty() {
+            return;
+        }
+
+        if let Some(current) = self.name_list_state.selected() {
+            let next = (current + 1).min(self.names.len().saturating_sub(1));
+            self.name_list_state.select(Some(next));
+            self.selected_name = Some(next);
+        }
+    }
+
+    pub fn previous_name(&mut self) {
+        if self.names.is_empty() {
+            return;
+        }
+
+        if let Some(current) = self.name_list_state.selected() {
+            let previous = current.saturating_sub(1);
+            self.name_list_state.select(Some(previous));
+            self.selected_name = Some(previous);
+        }
+    }
+
+    pub fn next_xref(&mut self) {
+        if self.xrefs.is_empty() {
+            return;
+        }
+
+        if let Some(current) = self.xref_list_state.selected() {
+            let next = (current + 1).min(self.xrefs.len().saturating_sub(1));
+            self.xref_list_state.select(Some(next));
+            self.selected_xref = Some(next);
+        }
+    }
+
+    pub fn previous_xref(&mut self) {
+        if self.xrefs.is_empty() {
+            return;
+        }
+
+        if let Some(current) = self.xref_list_state.selected() {
+            let previous = current.saturating_sub(1);
+            self.xref_list_state.select(Some(previous));
+            self.selected_xref = Some(previous);
+        }
+    }
+
+    pub fn jump_to_selected_function(&mut self) {
+        let Some(function_idx) = self.selected_function else {
+            return;
+        };
+        let Some(function) = self.functions.get(function_idx) else {
+            return;
+        };
+        let Some(instruction_idx) = self.find_instruction_by_address(function.entry) else {
+            return;
+        };
+
+        self.selected_instruction = Some(instruction_idx);
+        if let Some(filtered_idx) = self
+            .filtered_instructions
+            .iter()
+            .position(|idx| *idx == instruction_idx)
+        {
+            self.instruction_list_state.select(Some(filtered_idx));
+        }
+        self.current_tab = Tab::Instructions;
+    }
+
+    pub fn jump_to_selected_name(&mut self) {
+        let Some(name_idx) = self.selected_name else {
+            return;
+        };
+        let Some(address) = self.names.get(name_idx).and_then(NameItem::address) else {
+            return;
+        };
+        let Some(instruction_idx) = self.find_instruction_at_or_after(Address(address)) else {
+            return;
+        };
+
+        self.selected_instruction = Some(instruction_idx);
+        if let Some(filtered_idx) = self
+            .filtered_instructions
+            .iter()
+            .position(|idx| *idx == instruction_idx)
+        {
+            self.instruction_list_state.select(Some(filtered_idx));
+        }
+        self.current_tab = Tab::Instructions;
+    }
+
+    pub fn jump_to_selected_xref(&mut self) {
+        let Some(xref_idx) = self.selected_xref else {
+            return;
+        };
+        let Some(xref) = self.xrefs.get(xref_idx) else {
+            return;
+        };
+        let Some(instruction_idx) = self.find_instruction_at_or_after(xref.from) else {
+            return;
+        };
+
+        self.selected_instruction = Some(instruction_idx);
+        if let Some(filtered_idx) = self
+            .filtered_instructions
+            .iter()
+            .position(|idx| *idx == instruction_idx)
+        {
+            self.instruction_list_state.select(Some(filtered_idx));
+        }
+        self.current_tab = Tab::Instructions;
+    }
+
+    fn find_instruction_by_address(&self, address: Address) -> Option<usize> {
+        self.instructions
+            .binary_search_by_key(&address.0, |instruction| instruction.address)
+            .ok()
+    }
+
+    fn find_instruction_at_or_after(&self, address: Address) -> Option<usize> {
+        match self
+            .instructions
+            .binary_search_by_key(&address.0, |instruction| instruction.address)
+        {
+            Ok(idx) => Some(idx),
+            Err(idx) if idx < self.instructions.len() => Some(idx),
+            Err(_) => None,
+        }
+    }
+
+    pub fn toggle_help(&mut self) {
+        self.show_help = !self.show_help;
+    }
+
+    pub fn enter_search_mode(&mut self) {
+        self.search_mode = true;
+        self.search_query.clear();
+    }
+
+    pub fn exit_search_mode(&mut self) {
+        self.search_mode = false;
+        self.search_query.clear();
+        // Reset to show all instructions
+        self.filtered_instructions = (0..self.instructions.len()).collect();
+    }
+
+    pub fn update_search(&mut self, query: String) {
+        self.search_query = query;
+        self.apply_filter();
+    }
+
+    pub(crate) fn apply_filter(&mut self) {
+        // Only rebuild if search query actually changed
+        if self.search_query == self.last_search_query {
+            return;
+        }
+
+        self.last_search_query = self.search_query.clone();
+
+        if self.search_query.is_empty() {
+            self.filtered_instructions = (0..self.instructions.len()).collect();
+        } else {
+            // Pre-lowercase search query once
+            let search_lower = self.search_query.to_lowercase();
+
+            self.filtered_instructions = (0..self.instructions.len())
+                .filter(|&i| {
+                    // Use cached display strings instead of formatting
+                    self.instruction_display_cache[i]
+                        .to_lowercase()
+                        .contains(&search_lower)
+                })
+                .collect();
+        }
+
+        // Update selection safely
+        if let Some(selected) = self.selected_instruction {
+            if !self.filtered_instructions.contains(&selected) {
+                if let Some(&first) = self.filtered_instructions.first() {
+                    self.selected_instruction = Some(first);
+                    self.instruction_list_state.select(Some(0));
+                } else {
+                    self.selected_instruction = None;
+                    self.instruction_list_state.select(None);
+                }
+            }
+        }
+    }
+}
+
+fn build_name_items(analysis: &BinaryAnalysis) -> Vec<NameItem> {
+    let mut names = Vec::with_capacity(
+        analysis.imports.len() + analysis.symbols.len() + analysis.strings.len(),
+    );
+
+    names.extend(analysis.imports.iter().cloned().map(NameItem::Import));
+    names.extend(analysis.symbols.iter().cloned().map(NameItem::Symbol));
+    names.extend(analysis.strings.iter().cloned().map(NameItem::String));
+    names.sort_by_key(|item| (item.address().unwrap_or(u64::MAX), item.kind()));
+    names
+}
+
+fn build_xref_items(cfg: &ControlFlowGraph) -> Vec<XrefItem> {
+    let mut xrefs: Vec<XrefItem> = cfg
+        .edges
+        .iter()
+        .filter(|edge| edge.edge_type != EdgeType::Return)
+        .map(|edge| XrefItem {
+            from: edge.from,
+            to: edge.to,
+            edge_type: edge.edge_type.clone(),
+        })
+        .collect();
+
+    xrefs.sort_by_key(|xref| (xref.to, xref.from));
+    xrefs
+}
+
+fn truncate_for_display(value: &str, max_chars: usize) -> String {
+    let mut chars = value.chars();
+    let mut truncated: String = chars.by_ref().take(max_chars).collect();
+    if chars.next().is_some() {
+        truncated.push_str("...");
+    }
+    truncated
+}

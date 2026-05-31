@@ -15,7 +15,7 @@ Implemented:
 - Export formats: JSON, CSV, HTML, Markdown, DOT, and assembly.
 
 Main gaps:
-- `src/tui.rs` is too large and mixes state, input handling, rendering, and analysis projections.
+- TUI responsibilities are split across focused modules, but `src/tui/views.rs` is still large and should eventually move to per-view files.
 - Function recovery is heuristic and noisy; many one-instruction functions are inferred.
 - Xrefs are CFG-edge based only; data references, import references, and string references are not yet found.
 - No persistent analysis database for user names, comments, bookmarks, or patches.
@@ -24,6 +24,8 @@ Main gaps:
 - Open-source project hygiene is incomplete: no roadmap until this file, no issue templates, no contribution guide depth, no CI, no release artifacts.
 
 ## Phase 0: Stabilize The Baseline
+
+Status: complete as of commit `6b7abff`.
 
 Purpose: make the current staged work easy to trust before building more UI.
 
@@ -38,6 +40,8 @@ Acceptance criteria:
 - README documents the current tab order accurately.
 
 ## Phase 1: TUI Architecture Split
+
+Status: complete.
 
 Purpose: make future IDA-like features cheaper and safer to add.
 
@@ -187,8 +191,8 @@ Acceptance criteria:
 
 ## Recommended Next Three Implementation Slices
 
-1. Commit staged Names/Xrefs work.
-2. Split `src/tui.rs` into `tui/app.rs`, `tui/input.rs`, `tui/session.rs`, and `tui/views/*` without behavior changes.
-3. Add navigation history and address jump (`g`) because it immediately improves the IDA-like workflow.
+1. Add navigation history and address jump (`g`) because it immediately improves the IDA-like workflow.
+2. Add persistent analysis state for user names, comments, and bookmarks.
+3. Improve xrefs with string references, import call-site references, and data references.
 
-These slices deliberately avoid deeper analysis changes until the TUI code is easier to extend.
+These slices build on the completed TUI module split and should stay small enough to validate independently.
