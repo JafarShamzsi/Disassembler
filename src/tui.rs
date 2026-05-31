@@ -20,27 +20,90 @@ use ratatui::{
 use std::io;
 
 use crate::arch::x86::Instruction;
-use crate::graph::{Address, ControlFlowGraph, FunctionSummary};
+use crate::graph::{Address, ControlFlowGraph, EdgeType, FunctionSummary};
 use crate::graph_renderer::GraphRenderer;
 use crate::graph_view::{GraphView, NavigationDirection};
+use crate::parser::{BinaryAnalysis, ImportSummary, StringSummary, SymbolSummary};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Tab {
     Instructions,
     Functions,
+    Names,
+    Xrefs,
     ControlFlow,
     GraphView,
     HexDump,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NameItem {
+    Import(ImportSummary),
+    Symbol(SymbolSummary),
+    String(StringSummary),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct XrefItem {
+    pub from: Address,
+    pub to: Address,
+    pub edge_type: EdgeType,
+}
+
+impl XrefItem {
+    fn kind(&self) -> &'static str {
+        match self.edge_type {
+            EdgeType::Call => "call",
+            EdgeType::ConditionalTrue => "true",
+            EdgeType::ConditionalFalse => "false",
+            EdgeType::Unconditional => "jump",
+            EdgeType::Return => "return",
+        }
+    }
+}
+
+impl NameItem {
+    fn address(&self) -> Option<u64> {
+        match self {
+            NameItem::Import(import) => import.address,
+            NameItem::Symbol(symbol) => symbol.address,
+            NameItem::String(string) => Some(string.address),
+        }
+    }
+
+    fn kind(&self) -> &'static str {
+        match self {
+            NameItem::Import(_) => "import",
+            NameItem::Symbol(symbol) => symbol.kind.as_str(),
+            NameItem::String(_) => "string",
+        }
+    }
+
+    fn label(&self) -> String {
+        match self {
+            NameItem::Import(import) => {
+                let library = import.library.as_deref().unwrap_or("unknown");
+                format!("{library}!{}", import.name)
+            }
+            NameItem::Symbol(symbol) => symbol.name.clone(),
+            NameItem::String(string) => truncate_for_display(&string.value, 72),
+        }
+    }
+}
+
 pub struct App {
     pub instructions: Vec<Instruction>,
     pub cfg: Option<ControlFlowGraph>,
+    pub analysis: BinaryAnalysis,
     pub current_tab: Tab,
     pub instruction_list_state: ListState,
     pub function_list_state: ListState,
+    pub name_list_state: ListState,
+    pub xref_list_state: ListState,
     pub selected_instruction: Option<usize>,
     pub selected_function: Option<usize>,
+    pub selected_name: Option<usize>,
+    pub selected_xref: Option<usize>,
     pub scroll_offset: usize,
     pub show_help: bool,
     pub search_mode: bool,
@@ -49,12 +112,18 @@ pub struct App {
     pub instruction_display_cache: Vec<String>,
     pub last_search_query: String,
     pub functions: Vec<FunctionSummary>,
+    pub names: Vec<NameItem>,
+    pub xrefs: Vec<XrefItem>,
     pub graph_view: GraphView,
     pub graph_renderer: GraphRenderer,
 }
 
 impl App {
-    pub fn new(instructions: Vec<Instruction>, cfg: Option<ControlFlowGraph>) -> Self {
+    pub fn new(
+        instructions: Vec<Instruction>,
+        cfg: Option<ControlFlowGraph>,
+        analysis: BinaryAnalysis,
+    ) -> Self {
         let instruction_display_cache: Vec<String> = instructions
             .iter()
             .map(|instr| format!("{:#08x}: {}", instr.address, instr.text))
@@ -65,6 +134,8 @@ impl App {
             .as_ref()
             .map(ControlFlowGraph::function_summaries)
             .unwrap_or_default();
+        let names = build_name_items(&analysis);
+        let xrefs = cfg.as_ref().map(build_xref_items).unwrap_or_default();
 
         // Initialize graph view with CFG if available
         if let Some(ref cfg) = cfg {
@@ -74,11 +145,16 @@ impl App {
         let mut app = Self {
             instructions,
             cfg,
+            analysis,
             current_tab: Tab::Instructions,
             instruction_list_state: ListState::default(),
             function_list_state: ListState::default(),
+            name_list_state: ListState::default(),
+            xref_list_state: ListState::default(),
             selected_instruction: None,
             selected_function: None,
+            selected_name: None,
+            selected_xref: None,
             scroll_offset: 0,
             show_help: false,
             search_mode: false,
@@ -87,6 +163,8 @@ impl App {
             instruction_display_cache,
             last_search_query: String::new(),
             functions,
+            names,
+            xrefs,
             graph_view,
             graph_renderer: GraphRenderer::default(),
         };
@@ -100,6 +178,16 @@ impl App {
         if !app.functions.is_empty() {
             app.function_list_state.select(Some(0));
             app.selected_function = Some(0);
+        }
+
+        if !app.names.is_empty() {
+            app.name_list_state.select(Some(0));
+            app.selected_name = Some(0);
+        }
+
+        if !app.xrefs.is_empty() {
+            app.xref_list_state.select(Some(0));
+            app.selected_xref = Some(0);
         }
 
         app
@@ -143,7 +231,9 @@ impl App {
     pub fn next_tab(&mut self) {
         self.current_tab = match self.current_tab {
             Tab::Instructions => Tab::Functions,
-            Tab::Functions => Tab::ControlFlow,
+            Tab::Functions => Tab::Names,
+            Tab::Names => Tab::Xrefs,
+            Tab::Xrefs => Tab::ControlFlow,
             Tab::ControlFlow => Tab::GraphView,
             Tab::GraphView => Tab::HexDump,
             Tab::HexDump => Tab::Instructions,
@@ -154,7 +244,9 @@ impl App {
         self.current_tab = match self.current_tab {
             Tab::Instructions => Tab::HexDump,
             Tab::Functions => Tab::Instructions,
-            Tab::ControlFlow => Tab::Functions,
+            Tab::Names => Tab::Functions,
+            Tab::Xrefs => Tab::Names,
+            Tab::ControlFlow => Tab::Xrefs,
             Tab::GraphView => Tab::ControlFlow,
             Tab::HexDump => Tab::GraphView,
         };
@@ -184,6 +276,54 @@ impl App {
         }
     }
 
+    pub fn next_name(&mut self) {
+        if self.names.is_empty() {
+            return;
+        }
+
+        if let Some(current) = self.name_list_state.selected() {
+            let next = (current + 1).min(self.names.len().saturating_sub(1));
+            self.name_list_state.select(Some(next));
+            self.selected_name = Some(next);
+        }
+    }
+
+    pub fn previous_name(&mut self) {
+        if self.names.is_empty() {
+            return;
+        }
+
+        if let Some(current) = self.name_list_state.selected() {
+            let previous = current.saturating_sub(1);
+            self.name_list_state.select(Some(previous));
+            self.selected_name = Some(previous);
+        }
+    }
+
+    pub fn next_xref(&mut self) {
+        if self.xrefs.is_empty() {
+            return;
+        }
+
+        if let Some(current) = self.xref_list_state.selected() {
+            let next = (current + 1).min(self.xrefs.len().saturating_sub(1));
+            self.xref_list_state.select(Some(next));
+            self.selected_xref = Some(next);
+        }
+    }
+
+    pub fn previous_xref(&mut self) {
+        if self.xrefs.is_empty() {
+            return;
+        }
+
+        if let Some(current) = self.xref_list_state.selected() {
+            let previous = current.saturating_sub(1);
+            self.xref_list_state.select(Some(previous));
+            self.selected_xref = Some(previous);
+        }
+    }
+
     pub fn jump_to_selected_function(&mut self) {
         let Some(function_idx) = self.selected_function else {
             return;
@@ -206,10 +346,65 @@ impl App {
         self.current_tab = Tab::Instructions;
     }
 
+    pub fn jump_to_selected_name(&mut self) {
+        let Some(name_idx) = self.selected_name else {
+            return;
+        };
+        let Some(address) = self.names.get(name_idx).and_then(NameItem::address) else {
+            return;
+        };
+        let Some(instruction_idx) = self.find_instruction_at_or_after(Address(address)) else {
+            return;
+        };
+
+        self.selected_instruction = Some(instruction_idx);
+        if let Some(filtered_idx) = self
+            .filtered_instructions
+            .iter()
+            .position(|idx| *idx == instruction_idx)
+        {
+            self.instruction_list_state.select(Some(filtered_idx));
+        }
+        self.current_tab = Tab::Instructions;
+    }
+
+    pub fn jump_to_selected_xref(&mut self) {
+        let Some(xref_idx) = self.selected_xref else {
+            return;
+        };
+        let Some(xref) = self.xrefs.get(xref_idx) else {
+            return;
+        };
+        let Some(instruction_idx) = self.find_instruction_at_or_after(xref.from) else {
+            return;
+        };
+
+        self.selected_instruction = Some(instruction_idx);
+        if let Some(filtered_idx) = self
+            .filtered_instructions
+            .iter()
+            .position(|idx| *idx == instruction_idx)
+        {
+            self.instruction_list_state.select(Some(filtered_idx));
+        }
+        self.current_tab = Tab::Instructions;
+    }
+
     fn find_instruction_by_address(&self, address: Address) -> Option<usize> {
         self.instructions
             .binary_search_by_key(&address.0, |instruction| instruction.address)
             .ok()
+    }
+
+    fn find_instruction_at_or_after(&self, address: Address) -> Option<usize> {
+        match self
+            .instructions
+            .binary_search_by_key(&address.0, |instruction| instruction.address)
+        {
+            Ok(idx) => Some(idx),
+            Err(idx) if idx < self.instructions.len() => Some(idx),
+            Err(_) => None,
+        }
     }
 
     pub fn toggle_help(&mut self) {
@@ -272,9 +467,47 @@ impl App {
     }
 }
 
+fn build_name_items(analysis: &BinaryAnalysis) -> Vec<NameItem> {
+    let mut names = Vec::with_capacity(
+        analysis.imports.len() + analysis.symbols.len() + analysis.strings.len(),
+    );
+
+    names.extend(analysis.imports.iter().cloned().map(NameItem::Import));
+    names.extend(analysis.symbols.iter().cloned().map(NameItem::Symbol));
+    names.extend(analysis.strings.iter().cloned().map(NameItem::String));
+    names.sort_by_key(|item| (item.address().unwrap_or(u64::MAX), item.kind()));
+    names
+}
+
+fn build_xref_items(cfg: &ControlFlowGraph) -> Vec<XrefItem> {
+    let mut xrefs: Vec<XrefItem> = cfg
+        .edges
+        .iter()
+        .filter(|edge| edge.edge_type != EdgeType::Return)
+        .map(|edge| XrefItem {
+            from: edge.from,
+            to: edge.to,
+            edge_type: edge.edge_type.clone(),
+        })
+        .collect();
+
+    xrefs.sort_by_key(|xref| (xref.to, xref.from));
+    xrefs
+}
+
+fn truncate_for_display(value: &str, max_chars: usize) -> String {
+    let mut chars = value.chars();
+    let mut truncated: String = chars.by_ref().take(max_chars).collect();
+    if chars.next().is_some() {
+        truncated.push_str("...");
+    }
+    truncated
+}
+
 pub fn run_tui(
     instructions: Vec<Instruction>,
     cfg: Option<ControlFlowGraph>,
+    analysis: BinaryAnalysis,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // AGGRESSIVE: Reset terminal state before we even start
     emergency_terminal_reset();
@@ -290,7 +523,7 @@ pub fn run_tui(
     let mut terminal = Terminal::new(backend)?;
 
     // Create app and run it
-    let app = App::new(instructions, cfg);
+    let app = App::new(instructions, cfg, analysis);
     let _res = run_app(&mut terminal, app);
 
     // Comprehensive terminal cleanup - ensure we always restore terminal state
@@ -435,6 +668,10 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Result<(
                                     }
                                 } else if app.current_tab == Tab::Functions {
                                     app.next_function();
+                                } else if app.current_tab == Tab::Names {
+                                    app.next_name();
+                                } else if app.current_tab == Tab::Xrefs {
+                                    app.next_xref();
                                 } else {
                                     app.next_instruction();
                                 }
@@ -446,12 +683,22 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Result<(
                                     }
                                 } else if app.current_tab == Tab::Functions {
                                     app.previous_function();
+                                } else if app.current_tab == Tab::Names {
+                                    app.previous_name();
+                                } else if app.current_tab == Tab::Xrefs {
+                                    app.previous_xref();
                                 } else {
                                     app.previous_instruction();
                                 }
                             }
                             KeyCode::Enter if app.current_tab == Tab::Functions => {
                                 app.jump_to_selected_function();
+                            }
+                            KeyCode::Enter if app.current_tab == Tab::Names => {
+                                app.jump_to_selected_name();
+                            }
+                            KeyCode::Enter if app.current_tab == Tab::Xrefs => {
+                                app.jump_to_selected_xref();
                             }
                             KeyCode::Left => {
                                 if app.current_tab == Tab::GraphView {
@@ -473,9 +720,11 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Result<(
                             KeyCode::BackTab => app.previous_tab(),
                             KeyCode::Char('1') => app.current_tab = Tab::Instructions,
                             KeyCode::Char('2') => app.current_tab = Tab::Functions,
-                            KeyCode::Char('3') => app.current_tab = Tab::ControlFlow,
-                            KeyCode::Char('4') => app.current_tab = Tab::GraphView,
-                            KeyCode::Char('5') => app.current_tab = Tab::HexDump,
+                            KeyCode::Char('3') => app.current_tab = Tab::Names,
+                            KeyCode::Char('4') => app.current_tab = Tab::Xrefs,
+                            KeyCode::Char('5') => app.current_tab = Tab::ControlFlow,
+                            KeyCode::Char('6') => app.current_tab = Tab::GraphView,
+                            KeyCode::Char('7') => app.current_tab = Tab::HexDump,
                             KeyCode::PageDown => {
                                 if app.current_tab == Tab::GraphView {
                                     app.graph_view.zoom_out();
@@ -555,6 +804,8 @@ fn ui(f: &mut Frame, app: &mut App) {
     let tab_titles: Vec<Line> = [
         "Instructions",
         "Functions",
+        "Names",
+        "Xrefs",
         "Control Flow",
         "Graph View",
         "Hex Dump",
@@ -567,9 +818,11 @@ fn ui(f: &mut Frame, app: &mut App) {
     let selected_tab = match app.current_tab {
         Tab::Instructions => 0,
         Tab::Functions => 1,
-        Tab::ControlFlow => 2,
-        Tab::GraphView => 3,
-        Tab::HexDump => 4,
+        Tab::Names => 2,
+        Tab::Xrefs => 3,
+        Tab::ControlFlow => 4,
+        Tab::GraphView => 5,
+        Tab::HexDump => 6,
     };
 
     let tabs = Tabs::new(tab_titles)
@@ -593,6 +846,8 @@ fn ui(f: &mut Frame, app: &mut App) {
     match app.current_tab {
         Tab::Instructions => render_instructions(f, app, chunks[1]),
         Tab::Functions => render_functions(f, app, chunks[1]),
+        Tab::Names => render_names(f, app, chunks[1]),
+        Tab::Xrefs => render_xrefs(f, app, chunks[1]),
         Tab::ControlFlow => render_control_flow(f, app, chunks[1]),
         Tab::GraphView => render_graph_view(f, app, chunks[1]),
         Tab::HexDump => render_hex_dump(f, app, chunks[1]),
@@ -885,6 +1140,260 @@ fn render_function_details(f: &mut Frame, app: &App, area: Rect) {
     f.render_widget(paragraph, area);
 }
 
+fn render_names(f: &mut Frame, app: &mut App, area: Rect) {
+    if app.names.is_empty() {
+        let paragraph = Paragraph::new("No imports, symbols, or strings found")
+            .block(Block::default().borders(Borders::ALL).title("Names"))
+            .wrap(Wrap { trim: true });
+        f.render_widget(paragraph, area);
+        return;
+    }
+
+    let chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(64), Constraint::Percentage(36)])
+        .split(area);
+
+    let name_items: Vec<ListItem> = app
+        .names
+        .iter()
+        .enumerate()
+        .map(|(idx, item)| {
+            let style = if app.selected_name == Some(idx) {
+                Style::default()
+                    .bg(Color::DarkGray)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default()
+            };
+            let address = item
+                .address()
+                .map(|address| format!("{address:#014x}"))
+                .unwrap_or_else(|| "unknown".to_string());
+
+            ListItem::new(Line::from(vec![
+                Span::styled(format!("{:<14}", address), Style::default().fg(Color::Cyan)),
+                Span::styled(
+                    format!(" {:<8} ", item.kind()),
+                    Style::default().fg(Color::Yellow),
+                ),
+                Span::styled(item.label(), style),
+            ]))
+        })
+        .collect();
+
+    let names_list = List::new(name_items)
+        .block(Block::default().borders(Borders::ALL).title(format!(
+            "Names: {} imports, {} symbols, {} strings",
+            app.analysis.imports.len(),
+            app.analysis.symbols.len(),
+            app.analysis.strings.len()
+        )))
+        .highlight_style(
+            Style::default()
+                .add_modifier(Modifier::BOLD)
+                .bg(Color::Blue),
+        )
+        .highlight_symbol("> ");
+
+    f.render_stateful_widget(names_list, chunks[0], &mut app.name_list_state);
+    render_name_details(f, app, chunks[1]);
+}
+
+fn render_name_details(f: &mut Frame, app: &App, area: Rect) {
+    let Some(name_idx) = app.selected_name else {
+        let paragraph = Paragraph::new("No name selected")
+            .block(Block::default().borders(Borders::ALL).title("Name Details"));
+        f.render_widget(paragraph, area);
+        return;
+    };
+
+    let Some(item) = app.names.get(name_idx) else {
+        return;
+    };
+
+    let address = item
+        .address()
+        .map(|address| format!("{address:#x}"))
+        .unwrap_or_else(|| "unknown".to_string());
+
+    let mut lines = vec![
+        Line::from(vec![
+            Span::styled("Kind: ", Style::default().fg(Color::Cyan)),
+            Span::raw(item.kind()),
+        ]),
+        Line::from(vec![
+            Span::styled("Address: ", Style::default().fg(Color::Cyan)),
+            Span::raw(address),
+        ]),
+        Line::from(""),
+    ];
+
+    match item {
+        NameItem::Import(import) => {
+            lines.push(Line::from(vec![
+                Span::styled("Library: ", Style::default().fg(Color::Cyan)),
+                Span::raw(import.library.as_deref().unwrap_or("unknown")),
+            ]));
+            lines.push(Line::from(vec![
+                Span::styled("Name: ", Style::default().fg(Color::Cyan)),
+                Span::raw(import.name.clone()),
+            ]));
+        }
+        NameItem::Symbol(symbol) => {
+            lines.push(Line::from(vec![
+                Span::styled("Symbol: ", Style::default().fg(Color::Cyan)),
+                Span::raw(symbol.name.clone()),
+            ]));
+        }
+        NameItem::String(string) => {
+            lines.push(Line::from(vec![
+                Span::styled("Value: ", Style::default().fg(Color::Cyan)),
+                Span::raw(string.value.clone()),
+            ]));
+        }
+    }
+
+    if item.address().is_some() {
+        lines.push(Line::from(""));
+        lines.push(Line::from(vec![Span::styled(
+            "Press Enter to jump near address",
+            Style::default().fg(Color::Green),
+        )]));
+    }
+
+    let paragraph = Paragraph::new(lines)
+        .block(Block::default().borders(Borders::ALL).title("Name Details"))
+        .wrap(Wrap { trim: true });
+
+    f.render_widget(paragraph, area);
+}
+
+fn render_xrefs(f: &mut Frame, app: &mut App, area: Rect) {
+    if app.xrefs.is_empty() {
+        let paragraph = Paragraph::new(
+            "No cross-references available\n\nOpen a binary with --tui to build CFG-backed xrefs",
+        )
+        .block(Block::default().borders(Borders::ALL).title("Xrefs"))
+        .wrap(Wrap { trim: true });
+        f.render_widget(paragraph, area);
+        return;
+    }
+
+    let chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(64), Constraint::Percentage(36)])
+        .split(area);
+
+    let xref_items: Vec<ListItem> = app
+        .xrefs
+        .iter()
+        .enumerate()
+        .map(|(idx, xref)| {
+            let style = if app.selected_xref == Some(idx) {
+                Style::default()
+                    .bg(Color::DarkGray)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default()
+            };
+
+            ListItem::new(Line::from(vec![
+                Span::styled(
+                    format!("{:<8}", xref.kind()),
+                    Style::default().fg(Color::Yellow),
+                ),
+                Span::styled(format!(" {} ", xref.from), Style::default().fg(Color::Cyan)),
+                Span::raw("-> "),
+                Span::styled(format!("{}", xref.to), style),
+            ]))
+        })
+        .collect();
+
+    let xrefs_list = List::new(xref_items)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(format!("Cross References: {}", app.xrefs.len())),
+        )
+        .highlight_style(
+            Style::default()
+                .add_modifier(Modifier::BOLD)
+                .bg(Color::Blue),
+        )
+        .highlight_symbol("> ");
+
+    f.render_stateful_widget(xrefs_list, chunks[0], &mut app.xref_list_state);
+    render_xref_details(f, app, chunks[1]);
+}
+
+fn render_xref_details(f: &mut Frame, app: &App, area: Rect) {
+    let Some(xref_idx) = app.selected_xref else {
+        let paragraph = Paragraph::new("No xref selected")
+            .block(Block::default().borders(Borders::ALL).title("Xref Details"));
+        f.render_widget(paragraph, area);
+        return;
+    };
+
+    let Some(xref) = app.xrefs.get(xref_idx) else {
+        return;
+    };
+
+    let mut lines = vec![
+        Line::from(vec![
+            Span::styled("Kind: ", Style::default().fg(Color::Cyan)),
+            Span::raw(xref.kind()),
+        ]),
+        Line::from(vec![
+            Span::styled("From: ", Style::default().fg(Color::Cyan)),
+            Span::raw(format!("{}", xref.from)),
+        ]),
+        Line::from(vec![
+            Span::styled("To: ", Style::default().fg(Color::Cyan)),
+            Span::raw(format!("{}", xref.to)),
+        ]),
+        Line::from(""),
+        Line::from(vec![Span::styled(
+            "Press Enter to jump to source",
+            Style::default().fg(Color::Green),
+        )]),
+    ];
+
+    if let Some(cfg) = &app.cfg {
+        if let Some(block) = cfg.blocks.get(&xref.from) {
+            if let Some(instruction) = block.instructions.last() {
+                lines.push(Line::from(""));
+                lines.push(Line::from(vec![Span::styled(
+                    "Source Instruction:",
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                )]));
+                lines.push(Line::from(format!("  {}", instruction)));
+            }
+        }
+
+        if let Some(block) = cfg.blocks.get(&xref.to) {
+            if let Some(instruction) = block.instructions.first() {
+                lines.push(Line::from(""));
+                lines.push(Line::from(vec![Span::styled(
+                    "Target Block:",
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                )]));
+                lines.push(Line::from(format!("  {}", instruction)));
+            }
+        }
+    }
+
+    let paragraph = Paragraph::new(lines)
+        .block(Block::default().borders(Borders::ALL).title("Xref Details"))
+        .wrap(Wrap { trim: true });
+
+    f.render_widget(paragraph, area);
+}
+
 fn render_control_flow(f: &mut Frame, app: &App, area: Rect) {
     if let Some(cfg) = &app.cfg {
         // Split into metrics and blocks sections
@@ -1091,9 +1600,11 @@ fn render_status_bar(f: &mut Frame, app: &App, area: Rect) {
         )
     } else {
         format!(
-            "Instructions: {} | Functions: {} | Selected: {} | Tab: {:?} | '/' search, Enter jumps from Functions, h help, q quit",
+            "Instructions: {} | Functions: {} | Names: {} | Xrefs: {} | Selected: {} | Tab: {:?} | '/' search, Enter jumps, h help, q quit",
             app.instructions.len(),
             app.functions.len(),
+            app.names.len(),
+            app.xrefs.len(),
             app.selected_instruction
                 .map_or("None".to_string(), |i| (i + 1).to_string()),
             app.current_tab
@@ -1143,12 +1654,12 @@ fn render_help(f: &mut Frame) {
             Span::raw("- Previous tab"),
         ]),
         Line::from(vec![
-            Span::styled("  1-5        ", Style::default().fg(Color::Green)),
+            Span::styled("  1-7        ", Style::default().fg(Color::Green)),
             Span::raw("- Select specific tab"),
         ]),
         Line::from(vec![
             Span::styled("  Enter      ", Style::default().fg(Color::Green)),
-            Span::raw("- Jump to selected function entry"),
+            Span::raw("- Jump from selected function/name/xref"),
         ]),
         Line::from(""),
         Line::from(vec![Span::styled(
@@ -1167,14 +1678,22 @@ fn render_help(f: &mut Frame) {
         ]),
         Line::from(vec![
             Span::styled("  3 ", Style::default().fg(Color::Yellow)),
-            Span::raw("- Control Flow"),
+            Span::raw("- Names"),
         ]),
         Line::from(vec![
             Span::styled("  4 ", Style::default().fg(Color::Yellow)),
-            Span::raw("- Graph Analysis"),
+            Span::raw("- Xrefs"),
         ]),
         Line::from(vec![
             Span::styled("  5 ", Style::default().fg(Color::Yellow)),
+            Span::raw("- Control Flow"),
+        ]),
+        Line::from(vec![
+            Span::styled("  6 ", Style::default().fg(Color::Yellow)),
+            Span::raw("- Graph Analysis"),
+        ]),
+        Line::from(vec![
+            Span::styled("  7 ", Style::default().fg(Color::Yellow)),
             Span::raw("- Hex Dump"),
         ]),
         Line::from(""),
@@ -1273,6 +1792,7 @@ fn render_graph_view(f: &mut Frame, app: &mut App, area: Rect) {
 mod tests {
     use super::*;
     use crate::graph::{Address, Instruction as CfgInstruction};
+    use crate::parser::{StringSummary, SymbolKind, SymbolSummary};
 
     fn instruction(address: u64, text: &str, size: usize) -> Instruction {
         Instruction {
@@ -1316,6 +1836,7 @@ mod tests {
                 instruction(0x2004, "ret", 1),
             ],
             Some(cfg),
+            BinaryAnalysis::default(),
         );
 
         let callee_idx = app
@@ -1332,5 +1853,85 @@ mod tests {
         assert_eq!(app.current_tab, Tab::Instructions);
         assert_eq!(app.selected_instruction, Some(2));
         assert_eq!(app.instruction_list_state.selected(), Some(2));
+    }
+
+    #[test]
+    fn name_jump_selects_nearest_instruction() {
+        let analysis = BinaryAnalysis {
+            symbols: vec![SymbolSummary {
+                address: Some(0x2001),
+                name: "interesting_function".to_string(),
+                kind: SymbolKind::Function,
+            }],
+            strings: vec![StringSummary {
+                address: 0x3000,
+                value: "hello".to_string(),
+            }],
+            ..BinaryAnalysis::default()
+        };
+
+        let mut app = App::new(
+            vec![
+                instruction(0x1000, "nop", 1),
+                instruction(0x2000, "push rbp", 1),
+                instruction(0x2004, "mov rbp,rsp", 3),
+            ],
+            None,
+            analysis,
+        );
+
+        let symbol_idx = app
+            .names
+            .iter()
+            .position(|item| item.label() == "interesting_function")
+            .unwrap();
+
+        app.current_tab = Tab::Names;
+        app.selected_name = Some(symbol_idx);
+        app.name_list_state.select(Some(symbol_idx));
+        app.jump_to_selected_name();
+
+        assert_eq!(app.current_tab, Tab::Instructions);
+        assert_eq!(app.selected_instruction, Some(2));
+        assert_eq!(app.instruction_list_state.selected(), Some(2));
+    }
+
+    #[test]
+    fn xref_jump_selects_source_instruction() {
+        let mut cfg = ControlFlowGraph::new();
+        cfg.build_from_instructions(vec![
+            cfg_instruction(0x1000, "call", "0000000000002000h", 5),
+            cfg_instruction(0x1005, "ret", "", 1),
+            cfg_instruction(0x2000, "push", "rbp", 1),
+            cfg_instruction(0x2001, "mov", "rbp,rsp", 3),
+            cfg_instruction(0x2004, "ret", "", 1),
+        ]);
+
+        let mut app = App::new(
+            vec![
+                instruction(0x1000, "call 0000000000002000h", 5),
+                instruction(0x1005, "ret", 1),
+                instruction(0x2000, "push rbp", 1),
+                instruction(0x2001, "mov rbp,rsp", 3),
+                instruction(0x2004, "ret", 1),
+            ],
+            Some(cfg),
+            BinaryAnalysis::default(),
+        );
+
+        let xref_idx = app
+            .xrefs
+            .iter()
+            .position(|xref| xref.from == Address(0x1000) && xref.to == Address(0x2000))
+            .unwrap();
+
+        app.current_tab = Tab::Xrefs;
+        app.selected_xref = Some(xref_idx);
+        app.xref_list_state.select(Some(xref_idx));
+        app.jump_to_selected_xref();
+
+        assert_eq!(app.current_tab, Tab::Instructions);
+        assert_eq!(app.selected_instruction, Some(0));
+        assert_eq!(app.instruction_list_state.selected(), Some(0));
     }
 }

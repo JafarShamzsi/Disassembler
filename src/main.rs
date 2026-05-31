@@ -183,7 +183,7 @@ fn main() -> io::Result<()> {
 
         // Launch TUI immediately if requested, skip all other output
         if opts.tui {
-            if let Err(e) = tui::run_tui(instructions, cfg) {
+            if let Err(e) = tui::run_tui(instructions, cfg, analysis.clone()) {
                 eprintln!("[ERROR] TUI error: {}", e);
                 std::process::exit(1);
             }

@@ -2,6 +2,8 @@
 
 A modern, feature-rich binary disassembler written in Rust with an interactive TUI and control flow graph visualization.
 
+See [ROADMAP.md](ROADMAP.md) for the plan to evolve this into a more complete terminal-native reverse engineering workbench.
+
 ## Features
 
 ### **Disassembly Engine**
@@ -18,8 +20,10 @@ A modern, feature-rich binary disassembler written in Rust with an interactive T
 - **Export support**: JSON, CSV, HTML, Markdown, DOT, and Assembly formats
 
 ### **Interactive TUI**
-- **Multi-tab interface**: Instructions, Functions, Control Flow, Graph View, Hex Dump
+- **Multi-tab interface**: Instructions, Functions, Names, Xrefs, Control Flow, Graph View, Hex Dump
 - **Function browser**: Inferred function entries with caller counts and jump-to-entry navigation
+- **Names browser**: Imports, symbols, and printable strings with address-oriented jump navigation
+- **Cross-reference browser**: CFG-backed call and jump references with source navigation
 - **Graph navigation**: Arrow key navigation between connected blocks
 - **Search functionality**: Fast instruction search with filtering
 - **Viewport controls**: Pan (WASD), zoom (+/-), center (C)
@@ -77,8 +81,10 @@ cargo build --release
 **TUI Controls:**
 - `Tab`: Switch between views
 - `2`: Jump to Functions
-- `4`: Jump to Graph View
-- `Enter`: Jump to the selected function entry from the Functions tab
+- `3`: Jump to Names
+- `4`: Jump to Xrefs
+- `6`: Jump to Graph View
+- `Enter`: Jump to the selected function, name, or xref source
 - `Arrow Keys`: Navigate graph/instructions
 - `WASD`: Pan viewport
 - `+/-`: Zoom
@@ -146,6 +152,9 @@ cargo test           # Run tests
 ```bash
 # Test with sample binary
 ./target/debug/disassembler tests/notepad.exe --cfg --metrics
+
+# Run the full local smoke suite
+./scripts/smoke_test.sh
 
 # Interactive testing
 ./target/debug/disassembler tests/notepad.exe --tui
