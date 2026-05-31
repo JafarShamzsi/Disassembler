@@ -1,5 +1,6 @@
 use crate::arch;
 use crate::graph::ControlFlowGraph;
+use crate::parser::BinaryMetadata;
 use arch::x86::Instruction;
 use serde::{Deserialize, Serialize};
 use std::fs::File;
@@ -96,6 +97,8 @@ pub struct ExportMetadata {
     pub instruction_count: usize,
     pub address_range: (u64, u64),
     pub architecture: String,
+    pub binary_format: Option<String>,
+    pub entry_point: Option<u64>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -113,10 +116,19 @@ impl Exporter {
         format: ExportFormat,
         path: &str,
     ) -> Result<(), Box<dyn std::error::Error>> {
+        Self::export_instructions_with_metadata(instructions, format, path, None)
+    }
+
+    pub fn export_instructions_with_metadata(
+        instructions: &[Instruction],
+        format: ExportFormat,
+        path: &str,
+        binary_metadata: Option<&BinaryMetadata>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         let exportable: Vec<ExportableInstruction> =
             instructions.iter().map(|i| i.into()).collect();
 
-        let metadata = Self::create_metadata(&exportable, None);
+        let metadata = Self::create_metadata(&exportable, None, binary_metadata);
         let export_data = ExportData {
             metadata,
             instructions: exportable,
@@ -141,6 +153,16 @@ impl Exporter {
         format: ExportFormat,
         path: &str,
     ) -> Result<(), Box<dyn std::error::Error>> {
+        Self::export_with_cfg_and_metadata(instructions, cfg, format, path, None)
+    }
+
+    pub fn export_with_cfg_and_metadata(
+        instructions: &[Instruction],
+        cfg: &ControlFlowGraph,
+        format: ExportFormat,
+        path: &str,
+        binary_metadata: Option<&BinaryMetadata>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         let exportable: Vec<ExportableInstruction> =
             instructions.iter().map(|i| i.into()).collect();
 
@@ -150,7 +172,7 @@ impl Exporter {
             entry_points: cfg.blocks.keys().map(|addr| addr.0).collect(),
         });
 
-        let metadata = Self::create_metadata(&exportable, cfg_info.as_ref());
+        let metadata = Self::create_metadata(&exportable, cfg_info.as_ref(), binary_metadata);
         let export_data = ExportData {
             metadata,
             instructions: exportable,
@@ -161,13 +183,16 @@ impl Exporter {
             ExportFormat::Json => Self::export_json(&export_data, path),
             ExportFormat::Html => Self::export_html_with_cfg(&export_data, cfg, path),
             ExportFormat::Dot => Self::export_dot(cfg, path),
-            _ => Self::export_instructions(instructions, format, path),
+            _ => {
+                Self::export_instructions_with_metadata(instructions, format, path, binary_metadata)
+            }
         }
     }
 
     fn create_metadata(
         instructions: &[ExportableInstruction],
         _cfg_info: Option<&CfgExportData>,
+        binary_metadata: Option<&BinaryMetadata>,
     ) -> ExportMetadata {
         let (min_addr, max_addr) = if instructions.is_empty() {
             (0, 0)
@@ -185,7 +210,11 @@ impl Exporter {
             timestamp: chrono::Utc::now().to_rfc3339(),
             instruction_count: instructions.len(),
             address_range: (min_addr, max_addr),
-            architecture: "x86_64".to_string(), // Could be dynamic
+            architecture: binary_metadata
+                .map(|metadata| metadata.architecture.to_string())
+                .unwrap_or_else(|| "x86_64".to_string()),
+            binary_format: binary_metadata.map(|metadata| metadata.format.to_string()),
+            entry_point: binary_metadata.and_then(|metadata| metadata.entry_point),
         }
     }
 
@@ -433,6 +462,8 @@ impl Exporter {
             <div class="metadata-item"><strong>Instructions:</strong> {}</div>
             <div class="metadata-item"><strong>Address Range:</strong> {:#x} - {:#x}</div>
             <div class="metadata-item"><strong>Architecture:</strong> {}</div>
+            <div class="metadata-item"><strong>Format:</strong> {}</div>
+            <div class="metadata-item"><strong>Entry Point:</strong> {}</div>
         </div>
     </div>
 "#,
@@ -442,7 +473,12 @@ impl Exporter {
             metadata.instruction_count,
             metadata.address_range.0,
             metadata.address_range.1,
-            metadata.architecture
+            metadata.architecture,
+            metadata.binary_format.as_deref().unwrap_or("unknown"),
+            metadata
+                .entry_point
+                .map(|entry| format!("{entry:#x}"))
+                .unwrap_or_else(|| "none".to_string())
         )
     }
 
@@ -540,6 +576,15 @@ pub fn export_auto_format(
     cfg: Option<&ControlFlowGraph>,
     path: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    export_auto_format_with_metadata(instructions, cfg, path, None)
+}
+
+pub fn export_auto_format_with_metadata(
+    instructions: &[Instruction],
+    cfg: Option<&ControlFlowGraph>,
+    path: &str,
+    binary_metadata: Option<&BinaryMetadata>,
+) -> Result<(), Box<dyn std::error::Error>> {
     let path_obj = Path::new(path);
     let extension = path_obj
         .extension()
@@ -550,7 +595,11 @@ pub fn export_auto_format(
         .ok_or(format!("Unsupported export format: {}", extension))?;
 
     match cfg {
-        Some(cfg) => Exporter::export_with_cfg(instructions, cfg, format, path),
-        None => Exporter::export_instructions(instructions, format, path),
+        Some(cfg) => {
+            Exporter::export_with_cfg_and_metadata(instructions, cfg, format, path, binary_metadata)
+        }
+        None => {
+            Exporter::export_instructions_with_metadata(instructions, format, path, binary_metadata)
+        }
     }
 }

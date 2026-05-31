@@ -1,5 +1,7 @@
 // for the whole architecture traits and common things
 
+use std::fmt;
+
 use crate::arch::x86::Instruction;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -14,10 +16,46 @@ pub enum Architecture {
     MIPS64,
 }
 
+impl Architecture {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Architecture::X86 => "x86",
+            Architecture::X64 => "x86_64",
+            Architecture::ARM => "arm",
+            Architecture::AArch64 => "aarch64",
+            Architecture::RISCV32 => "riscv32",
+            Architecture::RISCV64 => "riscv64",
+            Architecture::MIPS => "mips",
+            Architecture::MIPS64 => "mips64",
+        }
+    }
+}
+
+impl fmt::Display for Architecture {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Endianness {
     Little,
     Big,
+}
+
+impl Endianness {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Endianness::Little => "little",
+            Endianness::Big => "big",
+        }
+    }
+}
+
+impl fmt::Display for Endianness {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
 }
 
 #[derive(Debug, Clone)]

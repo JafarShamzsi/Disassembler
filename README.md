@@ -5,9 +5,9 @@ A modern, feature-rich binary disassembler written in Rust with an interactive T
 ## Features
 
 ### **Disassembly Engine**
-- **x86/x86-64 support**: x86/x86-64 disassembly via iced-x86
-- **Extensible architecture framework**: ARM/AArch64 disassembler module is present but not yet wired into the CLI
-- **Binary format parsing**: PE `.text` extraction via goblin
+- **Architecture detection**: Detects x86, x86-64, ARM, AArch64, MIPS, and RISC-V metadata from PE/ELF headers
+- **Disassembly support**: x86/x86-64 via iced-x86; ARM/AArch64 via Capstone
+- **Binary format parsing**: PE and ELF `.text` extraction via goblin
 - **Instruction analysis**: Comprehensive instruction decoding using iced-x86
 - **Section analysis**: Automatic .text section extraction and analysis
 
@@ -27,7 +27,7 @@ A modern, feature-rich binary disassembler written in Rust with an interactive T
 - **Basic block analysis**: Block and edge analysis for control-flow exploration
 - **Loop detection**: Experimental back-edge based loop identification
 - **Metrics calculation**: Comprehensive graph statistics
-- **Planned analysis**: Function discovery, call graph, ELF/Mach-O support, and unreachable block detection
+- **Planned analysis**: Function discovery, call graph, Mach-O support, and unreachable block detection
 
 ## Quick Start
 

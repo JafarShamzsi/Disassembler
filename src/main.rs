@@ -1,8 +1,10 @@
 use clap::{Arg, Command};
+use disassembler::arch::arm::ARMDisassembler;
 use disassembler::arch::x86::{disasm, DisasmOpts};
-use disassembler::export::{export_auto_format, ExportFormat, Exporter};
+use disassembler::arch::{ArchConfig, ArchDisassembler, Architecture};
+use disassembler::export::{export_auto_format_with_metadata, ExportFormat, Exporter};
 use disassembler::graph::{Address, ControlFlowGraph, Instruction as CfgInstruction};
-use disassembler::parser::{self, TextSection};
+use disassembler::parser::{self, AnalyzedBinary, BinaryMetadata};
 use disassembler::tui;
 use std::fs::File;
 use std::io::{self, BufReader, Read};
@@ -106,25 +108,26 @@ fn main() -> io::Result<()> {
             buf
         };
 
-        let TextSection { va, bytes } = parser::get_text_section(&data).unwrap_or_else(|e| {
-            eprintln!("{}: failed to parse .text: {}", file_path.display(), e);
+        let AnalyzedBinary { metadata, text } = parser::analyze_binary(&data).unwrap_or_else(|e| {
+            eprintln!("{}: failed to analyze binary: {}", file_path.display(), e);
             std::process::exit(1);
         });
 
         if !opts.tui {
             println!(
-                "[OK] Loaded .text section: VA={:#x}, Size={} bytes",
-                va,
-                bytes.len()
+                "[OK] Loaded {} .text section: VA={:#x}, Size={} bytes, Arch={}, Endian={}",
+                metadata.format,
+                text.va,
+                text.bytes.len(),
+                metadata.architecture,
+                metadata.endianness
             );
         }
 
-        let disasm_opts = DisasmOpts {
-            base_address: va,
-            bitness: 64,
-        };
-
-        let instructions = disasm(bytes, disasm_opts);
+        let instructions = disassemble_text(text.bytes, text.va, &metadata).unwrap_or_else(|e| {
+            eprintln!("{}: failed to disassemble: {}", file_path.display(), e);
+            std::process::exit(1);
+        });
 
         if !opts.tui {
             println!("[INFO] Disassembled {} instructions", instructions.len());
@@ -202,20 +205,27 @@ fn main() -> io::Result<()> {
             let export_result = if let Some(format_str) = &opts.format {
                 let format = parse_export_format(format_str);
                 match &cfg {
-                    Some(cfg) => Exporter::export_with_cfg(
+                    Some(cfg) => Exporter::export_with_cfg_and_metadata(
                         &instructions,
                         cfg,
                         format,
                         output_path.to_str().unwrap(),
+                        Some(&metadata),
                     ),
-                    None => Exporter::export_instructions(
+                    None => Exporter::export_instructions_with_metadata(
                         &instructions,
                         format,
                         output_path.to_str().unwrap(),
+                        Some(&metadata),
                     ),
                 }
             } else {
-                export_auto_format(&instructions, cfg.as_ref(), output_path.to_str().unwrap())
+                export_auto_format_with_metadata(
+                    &instructions,
+                    cfg.as_ref(),
+                    output_path.to_str().unwrap(),
+                    Some(&metadata),
+                )
             };
 
             if let Err(e) = export_result {
@@ -248,6 +258,33 @@ fn main() -> io::Result<()> {
     }
 
     Ok(())
+}
+
+fn disassemble_text(
+    bytes: &[u8],
+    base_address: u64,
+    metadata: &BinaryMetadata,
+) -> Result<Vec<disassembler::Instruction>, Box<dyn std::error::Error>> {
+    match metadata.architecture {
+        Architecture::X86 | Architecture::X64 => Ok(disasm(
+            bytes,
+            DisasmOpts {
+                base_address,
+                bitness: metadata.bitness,
+            },
+        )),
+        Architecture::ARM | Architecture::AArch64 => {
+            let disassembler = ARMDisassembler;
+            let config = ArchConfig {
+                arch: metadata.architecture,
+                bitness: metadata.bitness,
+                endianness: metadata.endianness,
+                base_address,
+            };
+            Ok(disassembler.disassemble(bytes, &config))
+        }
+        unsupported => Err(format!("{} disassembly is not implemented yet", unsupported).into()),
+    }
 }
 
 fn display_metrics(cfg: &ControlFlowGraph) {
