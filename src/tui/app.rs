@@ -31,6 +31,16 @@ pub struct XrefItem {
     pub edge_type: EdgeType,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct NavigationLocation {
+    pub tab: Tab,
+    pub instruction: Option<usize>,
+    pub function: Option<usize>,
+    pub name: Option<usize>,
+    pub xref: Option<usize>,
+    pub graph_block: Option<Address>,
+}
+
 impl XrefItem {
     pub(crate) fn kind(&self) -> &'static str {
         match self.edge_type {
@@ -89,12 +99,17 @@ pub struct App {
     pub show_help: bool,
     pub search_mode: bool,
     pub search_query: String,
+    pub address_jump_mode: bool,
+    pub address_jump_query: String,
+    pub status_message: Option<String>,
     pub filtered_instructions: Vec<usize>,
     pub instruction_display_cache: Vec<String>,
     pub last_search_query: String,
     pub functions: Vec<FunctionSummary>,
     pub names: Vec<NameItem>,
     pub xrefs: Vec<XrefItem>,
+    pub back_stack: Vec<NavigationLocation>,
+    pub forward_stack: Vec<NavigationLocation>,
     pub graph_view: GraphView,
     pub graph_renderer: GraphRenderer,
 }
@@ -140,12 +155,17 @@ impl App {
             show_help: false,
             search_mode: false,
             search_query: String::new(),
+            address_jump_mode: false,
+            address_jump_query: String::new(),
+            status_message: None,
             filtered_instructions: Vec::new(),
             instruction_display_cache,
             last_search_query: String::new(),
             functions,
             names,
             xrefs,
+            back_stack: Vec::new(),
+            forward_stack: Vec::new(),
             graph_view,
             graph_renderer: GraphRenderer::default(),
         };
@@ -316,14 +336,8 @@ impl App {
             return;
         };
 
-        self.selected_instruction = Some(instruction_idx);
-        if let Some(filtered_idx) = self
-            .filtered_instructions
-            .iter()
-            .position(|idx| *idx == instruction_idx)
-        {
-            self.instruction_list_state.select(Some(filtered_idx));
-        }
+        self.push_history();
+        self.select_instruction(instruction_idx);
         self.current_tab = Tab::Instructions;
     }
 
@@ -338,14 +352,8 @@ impl App {
             return;
         };
 
-        self.selected_instruction = Some(instruction_idx);
-        if let Some(filtered_idx) = self
-            .filtered_instructions
-            .iter()
-            .position(|idx| *idx == instruction_idx)
-        {
-            self.instruction_list_state.select(Some(filtered_idx));
-        }
+        self.push_history();
+        self.select_instruction(instruction_idx);
         self.current_tab = Tab::Instructions;
     }
 
@@ -360,6 +368,104 @@ impl App {
             return;
         };
 
+        self.push_history();
+        self.select_instruction(instruction_idx);
+        self.current_tab = Tab::Instructions;
+    }
+
+    pub fn enter_address_jump_mode(&mut self) {
+        self.address_jump_mode = true;
+        self.address_jump_query.clear();
+        self.status_message = Some("Enter address and press Enter".to_string());
+    }
+
+    pub fn exit_address_jump_mode(&mut self) {
+        self.address_jump_mode = false;
+        self.address_jump_query.clear();
+    }
+
+    pub fn jump_to_address_query(&mut self) {
+        let query = self.address_jump_query.trim();
+        let Some(address) = parse_address_query(query) else {
+            self.status_message = Some(format!("Invalid address: {query}"));
+            self.exit_address_jump_mode();
+            return;
+        };
+
+        let Some(instruction_idx) = self.find_instruction_at_or_after(Address(address)) else {
+            self.status_message = Some(format!("Address outside disassembly: {address:#x}"));
+            self.exit_address_jump_mode();
+            return;
+        };
+
+        self.push_history();
+        self.select_instruction(instruction_idx);
+        self.current_tab = Tab::Instructions;
+        self.status_message = Some(format!("Jumped to {address:#x}"));
+        self.exit_address_jump_mode();
+    }
+
+    pub fn go_back(&mut self) {
+        let Some(location) = self.back_stack.pop() else {
+            self.status_message = Some("No previous navigation location".to_string());
+            return;
+        };
+
+        let current = self.current_location();
+        self.forward_stack.push(current);
+        self.restore_location(location);
+    }
+
+    pub fn go_forward(&mut self) {
+        let Some(location) = self.forward_stack.pop() else {
+            self.status_message = Some("No forward navigation location".to_string());
+            return;
+        };
+
+        let current = self.current_location();
+        self.back_stack.push(current);
+        self.restore_location(location);
+    }
+
+    fn push_history(&mut self) {
+        let current = self.current_location();
+        if self.back_stack.last() != Some(&current) {
+            self.back_stack.push(current);
+        }
+        self.forward_stack.clear();
+    }
+
+    fn current_location(&self) -> NavigationLocation {
+        NavigationLocation {
+            tab: self.current_tab.clone(),
+            instruction: self.selected_instruction,
+            function: self.selected_function,
+            name: self.selected_name,
+            xref: self.selected_xref,
+            graph_block: self.graph_view.selected_block,
+        }
+    }
+
+    fn restore_location(&mut self, location: NavigationLocation) {
+        self.current_tab = location.tab;
+        if let Some(instruction_idx) = location.instruction {
+            self.select_instruction(instruction_idx);
+        }
+        self.selected_function = location.function.filter(|idx| *idx < self.functions.len());
+        self.function_list_state.select(self.selected_function);
+        self.selected_name = location.name.filter(|idx| *idx < self.names.len());
+        self.name_list_state.select(self.selected_name);
+        self.selected_xref = location.xref.filter(|idx| *idx < self.xrefs.len());
+        self.xref_list_state.select(self.selected_xref);
+        self.graph_view.selected_block = location.graph_block;
+        self.status_message = Some("Restored navigation location".to_string());
+    }
+
+    fn select_instruction(&mut self, instruction_idx: usize) {
+        if instruction_idx >= self.instructions.len() {
+            return;
+        }
+
         self.selected_instruction = Some(instruction_idx);
         if let Some(filtered_idx) = self
             .filtered_instructions
@@ -368,7 +474,6 @@ impl App {
         {
             self.instruction_list_state.select(Some(filtered_idx));
         }
-        self.current_tab = Tab::Instructions;
     }
 
     fn find_instruction_by_address(&self, address: Address) -> Option<usize> {
@@ -483,4 +588,20 @@ fn truncate_for_display(value: &str, max_chars: usize) -> String {
         truncated.push_str("...");
     }
     truncated
+}
+
+fn parse_address_query(query: &str) -> Option<u64> {
+    let query = query.trim();
+    let query = query
+        .strip_prefix("0x")
+        .or_else(|| query.strip_prefix("0X"))
+        .unwrap_or(query);
+
+    if query.is_empty() {
+        return None;
+    }
+
+    u64::from_str_radix(query, 16)
+        .ok()
+        .or_else(|| query.parse::<u64>().ok())
 }

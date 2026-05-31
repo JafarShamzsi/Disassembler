@@ -809,7 +809,14 @@ fn render_hex_dump(f: &mut Frame, app: &App, area: Rect) {
 
 // Update render_status_bar to show search mode
 fn render_status_bar(f: &mut Frame, app: &App, area: Rect) {
-    let status = if app.search_mode {
+    let status = if app.address_jump_mode {
+        format!(
+            "GOTO: '{}' | Enter jumps, ESC cancels | Back: {} Forward: {}",
+            app.address_jump_query,
+            app.back_stack.len(),
+            app.forward_stack.len()
+        )
+    } else if app.search_mode {
         format!(
             "SEARCH: '{}' | Instructions: {} | Selected: {} | Tab: {:?} | ESC to exit search",
             app.search_query,
@@ -819,15 +826,21 @@ fn render_status_bar(f: &mut Frame, app: &App, area: Rect) {
             app.current_tab
         )
     } else {
+        let message = app
+            .status_message
+            .as_ref()
+            .map(|message| format!(" | {message}"))
+            .unwrap_or_default();
         format!(
-            "Instructions: {} | Functions: {} | Names: {} | Xrefs: {} | Selected: {} | Tab: {:?} | '/' search, Enter jumps, h help, q quit",
+            "Instructions: {} | Functions: {} | Names: {} | Xrefs: {} | Selected: {} | Tab: {:?} | g goto, u/r back/forward, '/' search, h help, q quit{}",
             app.instructions.len(),
             app.functions.len(),
             app.names.len(),
             app.xrefs.len(),
             app.selected_instruction
                 .map_or("None".to_string(), |i| (i + 1).to_string()),
-            app.current_tab
+            app.current_tab,
+            message
         )
     };
 
@@ -880,6 +893,14 @@ fn render_help(f: &mut Frame) {
         Line::from(vec![
             Span::styled("  Enter      ", Style::default().fg(Color::Green)),
             Span::raw("- Jump from selected function/name/xref"),
+        ]),
+        Line::from(vec![
+            Span::styled("  g          ", Style::default().fg(Color::Green)),
+            Span::raw("- Jump to address"),
+        ]),
+        Line::from(vec![
+            Span::styled("  u/r        ", Style::default().fg(Color::Green)),
+            Span::raw("- Navigation back/forward"),
         ]),
         Line::from(""),
         Line::from(vec![Span::styled(

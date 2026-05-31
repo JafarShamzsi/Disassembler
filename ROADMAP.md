@@ -61,6 +61,8 @@ Acceptance criteria:
 
 ## Phase 2: Real Navigation Model
 
+Status: in progress.
+
 Purpose: make the TUI feel like a reverse engineering tool instead of separate lists.
 
 Work:

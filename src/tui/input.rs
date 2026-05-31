@@ -24,7 +24,19 @@ pub(crate) fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> i
             if let Event::Key(key) = event::read()? {
                 if key.kind == KeyEventKind::Press {
                     // Handle key events...
-                    if app.search_mode {
+                    if app.address_jump_mode {
+                        match key.code {
+                            KeyCode::Esc => app.exit_address_jump_mode(),
+                            KeyCode::Enter => app.jump_to_address_query(),
+                            KeyCode::Backspace => {
+                                app.address_jump_query.pop();
+                            }
+                            KeyCode::Char(c) if c.is_ascii_hexdigit() || matches!(c, 'x' | 'X') => {
+                                app.address_jump_query.push(c);
+                            }
+                            _ => {}
+                        }
+                    } else if app.search_mode {
                         match key.code {
                             KeyCode::Esc => app.exit_search_mode(),
                             KeyCode::Enter => app.exit_search_mode(),
@@ -48,6 +60,9 @@ pub(crate) fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> i
                             KeyCode::Esc => return Ok(()),
                             KeyCode::Char('h') | KeyCode::F(1) => app.toggle_help(),
                             KeyCode::Char('/') => app.enter_search_mode(),
+                            KeyCode::Char('g') => app.enter_address_jump_mode(),
+                            KeyCode::Char('u') => app.go_back(),
+                            KeyCode::Char('r') => app.go_forward(),
                             KeyCode::Down | KeyCode::Char('j') => {
                                 if app.current_tab == Tab::GraphView {
                                     if let Some(ref cfg) = app.cfg {

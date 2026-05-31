@@ -74,6 +74,7 @@ mod tests {
         assert_eq!(app.current_tab, Tab::Instructions);
         assert_eq!(app.selected_instruction, Some(2));
         assert_eq!(app.instruction_list_state.selected(), Some(2));
+        assert_eq!(app.back_stack.len(), 1);
     }
 
     #[test]
@@ -154,5 +155,69 @@ mod tests {
         assert_eq!(app.current_tab, Tab::Instructions);
         assert_eq!(app.selected_instruction, Some(0));
         assert_eq!(app.instruction_list_state.selected(), Some(0));
+    }
+
+    #[test]
+    fn navigation_back_restores_previous_tab_and_selection() {
+        let mut cfg = ControlFlowGraph::new();
+        cfg.build_from_instructions(vec![
+            cfg_instruction(0x1000, "call", "0000000000002000h", 5),
+            cfg_instruction(0x1005, "ret", "", 1),
+            cfg_instruction(0x2000, "push", "rbp", 1),
+            cfg_instruction(0x2001, "mov", "rbp,rsp", 3),
+            cfg_instruction(0x2004, "ret", "", 1),
+        ]);
+
+        let mut app = App::new(
+            vec![
+                instruction(0x1000, "call 0000000000002000h", 5),
+                instruction(0x1005, "ret", 1),
+                instruction(0x2000, "push rbp", 1),
+                instruction(0x2001, "mov rbp,rsp", 3),
+                instruction(0x2004, "ret", 1),
+            ],
+            Some(cfg),
+            BinaryAnalysis::default(),
+        );
+
+        let callee_idx = app
+            .functions
+            .iter()
+            .position(|function| function.entry == Address(0x2000))
+            .unwrap();
+
+        app.current_tab = Tab::Functions;
+        app.selected_function = Some(callee_idx);
+        app.function_list_state.select(Some(callee_idx));
+        app.jump_to_selected_function();
+        app.go_back();
+
+        assert_eq!(app.current_tab, Tab::Functions);
+        assert_eq!(app.selected_function, Some(callee_idx));
+        assert_eq!(app.function_list_state.selected(), Some(callee_idx));
+        assert_eq!(app.forward_stack.len(), 1);
+    }
+
+    #[test]
+    fn address_query_jumps_to_nearest_instruction() {
+        let mut app = App::new(
+            vec![
+                instruction(0x1000, "nop", 1),
+                instruction(0x2000, "push rbp", 1),
+                instruction(0x2004, "mov rbp,rsp", 3),
+            ],
+            None,
+            BinaryAnalysis::default(),
+        );
+
+        app.enter_address_jump_mode();
+        app.address_jump_query = "2001".to_string();
+        app.jump_to_address_query();
+
+        assert_eq!(app.current_tab, Tab::Instructions);
+        assert_eq!(app.selected_instruction, Some(2));
+        assert_eq!(app.instruction_list_state.selected(), Some(2));
+        assert!(!app.address_jump_mode);
+        assert_eq!(app.back_stack.len(), 1);
     }
 }

@@ -85,6 +85,8 @@ cargo build --release
 - `4`: Jump to Xrefs
 - `6`: Jump to Graph View
 - `Enter`: Jump to the selected function, name, or xref source
+- `g`: Jump to an address
+- `u` / `r`: Navigation back / forward
 - `Arrow Keys`: Navigate graph/instructions
 - `WASD`: Pan viewport
 - `+/-`: Zoom
