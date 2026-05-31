@@ -63,6 +63,8 @@ pub(crate) fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> i
                             KeyCode::Char('g') => app.enter_address_jump_mode(),
                             KeyCode::Char('u') => app.go_back(),
                             KeyCode::Char('r') => app.go_forward(),
+                            KeyCode::Char('n') => app.next_search_match(),
+                            KeyCode::Char('N') => app.previous_search_match(),
                             KeyCode::Down | KeyCode::Char('j') => {
                                 if app.current_tab == Tab::GraphView {
                                     if let Some(ref cfg) = app.cfg {

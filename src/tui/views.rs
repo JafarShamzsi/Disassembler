@@ -871,9 +871,10 @@ fn render_status_bar(f: &mut Frame, app: &App, area: Rect) {
         )
     } else if app.search_mode {
         format!(
-            "SEARCH: '{}' | Instructions: {} | Selected: {} | Tab: {:?} | ESC to exit search",
+            "SEARCH: '{}' | Instructions: {} | Results: {} | Selected: {} | Tab: {:?} | ESC exits, n/N cycles after search",
             app.search_query,
             app.filtered_instructions.len(),
+            app.search_matches.len(),
             app.selected_instruction
                 .map_or("None".to_string(), |i| (i + 1).to_string()),
             app.current_tab
@@ -885,7 +886,7 @@ fn render_status_bar(f: &mut Frame, app: &App, area: Rect) {
             .map(|message| format!(" | {message}"))
             .unwrap_or_default();
         format!(
-            "Instructions: {} | Functions: {} | Names: {} | Xrefs: {} | Selected: {} | Tab: {:?} | g goto, u/r back/forward, '/' search, h help, q quit{}",
+            "Instructions: {} | Functions: {} | Names: {} | Xrefs: {} | Selected: {} | Tab: {:?} | g goto, u/r back/forward, n/N search, '/' search, h help, q quit{}",
             app.instructions.len(),
             app.functions.len(),
             app.names.len(),
@@ -954,6 +955,10 @@ fn render_help(f: &mut Frame) {
         Line::from(vec![
             Span::styled("  u/r        ", Style::default().fg(Color::Green)),
             Span::raw("- Navigation back/forward"),
+        ]),
+        Line::from(vec![
+            Span::styled("  n/N        ", Style::default().fg(Color::Green)),
+            Span::raw("- Next/previous search result"),
         ]),
         Line::from(""),
         Line::from(vec![Span::styled(

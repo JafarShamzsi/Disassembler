@@ -51,6 +51,14 @@ pub struct AddressContext {
     pub outgoing_xrefs: Vec<XrefItem>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SearchMatch {
+    Instruction(usize),
+    Function(usize),
+    Name(usize),
+    Xref(usize),
+}
+
 impl XrefItem {
     pub(crate) fn kind(&self) -> &'static str {
         match self.edge_type {
@@ -113,6 +121,8 @@ pub struct App {
     pub address_jump_query: String,
     pub status_message: Option<String>,
     pub filtered_instructions: Vec<usize>,
+    pub search_matches: Vec<SearchMatch>,
+    pub selected_search_match: Option<usize>,
     pub instruction_display_cache: Vec<String>,
     pub last_search_query: String,
     pub functions: Vec<FunctionSummary>,
@@ -169,6 +179,8 @@ impl App {
             address_jump_query: String::new(),
             status_message: None,
             filtered_instructions: Vec::new(),
+            search_matches: Vec::new(),
+            selected_search_match: None,
             instruction_display_cache,
             last_search_query: String::new(),
             functions,
@@ -480,6 +492,38 @@ impl App {
         }
     }
 
+    pub fn next_search_match(&mut self) {
+        if self.search_matches.is_empty() {
+            self.status_message = Some("No search results".to_string());
+            return;
+        }
+
+        let next = self
+            .selected_search_match
+            .map(|idx| (idx + 1) % self.search_matches.len())
+            .unwrap_or(0);
+        self.activate_search_match(next);
+    }
+
+    pub fn previous_search_match(&mut self) {
+        if self.search_matches.is_empty() {
+            self.status_message = Some("No search results".to_string());
+            return;
+        }
+
+        let previous = self
+            .selected_search_match
+            .map(|idx| {
+                if idx == 0 {
+                    self.search_matches.len() - 1
+                } else {
+                    idx - 1
+                }
+            })
+            .unwrap_or(0);
+        self.activate_search_match(previous);
+    }
+
     fn push_history(&mut self) {
         let current = self.current_location();
         if self.back_stack.last() != Some(&current) {
@@ -529,6 +573,44 @@ impl App {
         }
     }
 
+    fn activate_search_match(&mut self, match_idx: usize) {
+        let Some(search_match) = self.search_matches.get(match_idx).cloned() else {
+            return;
+        };
+
+        self.push_history();
+        self.selected_search_match = Some(match_idx);
+
+        match search_match {
+            SearchMatch::Instruction(instruction_idx) => {
+                self.select_instruction(instruction_idx);
+                self.current_tab = Tab::Instructions;
+            }
+            SearchMatch::Function(function_idx) if function_idx < self.functions.len() => {
+                self.selected_function = Some(function_idx);
+                self.function_list_state.select(Some(function_idx));
+                self.current_tab = Tab::Functions;
+            }
+            SearchMatch::Name(name_idx) if name_idx < self.names.len() => {
+                self.selected_name = Some(name_idx);
+                self.name_list_state.select(Some(name_idx));
+                self.current_tab = Tab::Names;
+            }
+            SearchMatch::Xref(xref_idx) if xref_idx < self.xrefs.len() => {
+                self.selected_xref = Some(xref_idx);
+                self.xref_list_state.select(Some(xref_idx));
+                self.current_tab = Tab::Xrefs;
+            }
+            _ => {}
+        }
+
+        self.status_message = Some(format!(
+            "Search result {}/{}",
+            match_idx + 1,
+            self.search_matches.len()
+        ));
+    }
+
     fn block_containing_address(&self, address: Address) -> Option<Address> {
         let cfg = self.cfg.as_ref()?;
 
@@ -572,6 +654,8 @@ impl App {
         self.search_query.clear();
         // Reset to show all instructions
         self.filtered_instructions = (0..self.instructions.len()).collect();
+        self.search_matches.clear();
+        self.selected_search_match = None;
     }
 
     pub fn update_search(&mut self, query: String) {
@@ -589,6 +673,8 @@ impl App {
 
         if self.search_query.is_empty() {
             self.filtered_instructions = (0..self.instructions.len()).collect();
+            self.search_matches.clear();
+            self.selected_search_match = None;
         } else {
             // Pre-lowercase search query once
             let search_lower = self.search_query.to_lowercase();
@@ -601,6 +687,8 @@ impl App {
                         .contains(&search_lower)
                 })
                 .collect();
+            self.search_matches = self.collect_search_matches(&search_lower);
+            self.selected_search_match = (!self.search_matches.is_empty()).then_some(0);
         }
 
         // Update selection safely
@@ -615,6 +703,55 @@ impl App {
                 }
             }
         }
+    }
+
+    fn collect_search_matches(&self, query: &str) -> Vec<SearchMatch> {
+        let mut matches = Vec::new();
+
+        matches.extend((0..self.instructions.len()).filter_map(|idx| {
+            self.instruction_display_cache[idx]
+                .to_lowercase()
+                .contains(query)
+                .then_some(SearchMatch::Instruction(idx))
+        }));
+
+        matches.extend(
+            self.functions
+                .iter()
+                .enumerate()
+                .filter_map(|(idx, function)| {
+                    let text = format!(
+                        "{:#x} blocks:{} instructions:{} callers:{}",
+                        function.entry.0,
+                        function.block_count,
+                        function.instruction_count,
+                        function.caller_count
+                    );
+                    text.to_lowercase()
+                        .contains(query)
+                        .then_some(SearchMatch::Function(idx))
+                }),
+        );
+
+        matches.extend(self.names.iter().enumerate().filter_map(|(idx, name)| {
+            let address = name
+                .address()
+                .map(|address| format!("{address:#x}"))
+                .unwrap_or_else(|| "unknown".to_string());
+            let text = format!("{} {} {}", name.kind(), address, name.label());
+            text.to_lowercase()
+                .contains(query)
+                .then_some(SearchMatch::Name(idx))
+        }));
+
+        matches.extend(self.xrefs.iter().enumerate().filter_map(|(idx, xref)| {
+            let text = format!("{} {} {}", xref.kind(), xref.from, xref.to);
+            text.to_lowercase()
+                .contains(query)
+                .then_some(SearchMatch::Xref(idx))
+        }));
+
+        matches
     }
 }
 

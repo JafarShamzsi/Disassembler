@@ -87,6 +87,7 @@ cargo build --release
 - `Enter`: Jump to the selected function, name, or xref source
 - `g`: Jump to an address
 - `u` / `r`: Navigation back / forward
+- `n` / `N`: Next / previous search result
 - `Arrow Keys`: Navigate graph/instructions
 - `WASD`: Pan viewport
 - `+/-`: Zoom

@@ -272,4 +272,72 @@ mod tests {
             .iter()
             .any(|xref| xref.from == Address(0x1000) && xref.to == Address(0x2000)));
     }
+
+    #[test]
+    fn search_matches_names_and_jumps_results() {
+        let analysis = BinaryAnalysis {
+            symbols: vec![SymbolSummary {
+                address: Some(0x2000),
+                name: "callee".to_string(),
+                kind: SymbolKind::Function,
+            }],
+            ..BinaryAnalysis::default()
+        };
+
+        let mut app = App::new(
+            vec![
+                instruction(0x1000, "nop", 1),
+                instruction(0x2000, "push rbp", 1),
+            ],
+            None,
+            analysis,
+        );
+
+        app.update_search("callee".to_string());
+
+        assert_eq!(app.search_matches.len(), 1);
+        app.next_search_match();
+
+        assert_eq!(app.current_tab, Tab::Names);
+        assert_eq!(app.selected_name, Some(0));
+        assert_eq!(app.name_list_state.selected(), Some(0));
+    }
+
+    #[test]
+    fn search_matches_xrefs_and_cycles_results() {
+        let mut cfg = ControlFlowGraph::new();
+        cfg.build_from_instructions(vec![
+            cfg_instruction(0x1000, "call", "0000000000002000h", 5),
+            cfg_instruction(0x1005, "ret", "", 1),
+            cfg_instruction(0x2000, "push", "rbp", 1),
+            cfg_instruction(0x2001, "mov", "rbp,rsp", 3),
+            cfg_instruction(0x2004, "ret", "", 1),
+        ]);
+
+        let mut app = App::new(
+            vec![
+                instruction(0x1000, "call 0000000000002000h", 5),
+                instruction(0x1005, "ret", 1),
+                instruction(0x2000, "push rbp", 1),
+                instruction(0x2001, "mov rbp,rsp", 3),
+                instruction(0x2004, "ret", 1),
+            ],
+            Some(cfg),
+            BinaryAnalysis::default(),
+        );
+
+        app.update_search("0x00002000".to_string());
+        assert_eq!(app.search_matches.len(), 1);
+
+        app.next_search_match();
+
+        assert_eq!(app.current_tab, Tab::Xrefs);
+        assert_eq!(
+            app.selected_xref
+                .and_then(|idx| app.xrefs.get(idx))
+                .map(|xref| xref.to),
+            Some(Address(0x2000))
+        );
+        assert_eq!(app.selected_search_match, Some(0));
+    }
 }
