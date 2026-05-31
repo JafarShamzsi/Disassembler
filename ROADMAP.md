@@ -78,6 +78,8 @@ Acceptance criteria:
 
 ## Phase 3: Analysis Database
 
+Status: in progress. Project save/load foundations are in progress.
+
 Purpose: support the core IDA workflow: rename, comment, bookmark, save, reload.
 
 Work:

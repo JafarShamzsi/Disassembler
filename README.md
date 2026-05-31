@@ -61,6 +61,10 @@ cargo build --release
 # Imports, symbols, and strings
 ./target/release/disassembler binary.exe --names
 
+# Save or reload user analysis state
+./target/release/disassembler binary.exe --functions --save-project analysis.disproj.json
+./target/release/disassembler binary.exe --project analysis.disproj.json --names
+
 # Export analysis
 ./target/release/disassembler binary.exe --cfg --output analysis.json --format json
 ```

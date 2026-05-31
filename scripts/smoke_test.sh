@@ -35,4 +35,11 @@ cargo run -- "$SAMPLE" --output /tmp/disassembler-smoke.json --format json > /tm
 grep -q '"binary_format": "PE"' /tmp/disassembler-smoke.json
 grep -q '"import_count":' /tmp/disassembler-smoke.json
 
+echo "[smoke] project save/load"
+cargo run -- "$SAMPLE" --functions --save-project /tmp/disassembler-smoke.disproj.json > /tmp/disassembler-smoke-project-save.txt
+grep -q '"schema_version": 1' /tmp/disassembler-smoke.disproj.json
+grep -q '"functions":' /tmp/disassembler-smoke.disproj.json
+cargo run -- "$SAMPLE" --project /tmp/disassembler-smoke.disproj.json --names > /tmp/disassembler-smoke-project-load.txt
+grep -q '\[PROJECT\] Loaded' /tmp/disassembler-smoke-project-load.txt
+
 echo "[smoke] ok"

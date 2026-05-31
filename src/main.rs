@@ -5,6 +5,7 @@ use disassembler::arch::{ArchConfig, ArchDisassembler, Architecture};
 use disassembler::export::{export_auto_format_with_metadata_and_analysis, ExportFormat, Exporter};
 use disassembler::graph::{Address, ControlFlowGraph, Instruction as CfgInstruction};
 use disassembler::parser::{self, AnalyzedBinary, BinaryAnalysis, BinaryMetadata};
+use disassembler::project::AnalysisProject;
 use disassembler::tui;
 use std::fs::File;
 use std::io::{self, BufReader, Read};
@@ -17,6 +18,10 @@ pub struct Opts {
     pub tui: bool,
 
     pub output: Option<PathBuf>,
+
+    pub project: Option<PathBuf>,
+
+    pub save_project: Option<PathBuf>,
 
     pub format: Option<String>,
 
@@ -43,6 +48,12 @@ impl Opts {
                 Arg::new("output")
                     .long("output")
                     .short('o')
+                    .value_name("FILE"),
+            )
+            .arg(Arg::new("project").long("project").value_name("FILE"))
+            .arg(
+                Arg::new("save-project")
+                    .long("save-project")
                     .value_name("FILE"),
             )
             .arg(
@@ -84,6 +95,8 @@ impl Opts {
             cfg: matches.get_flag("cfg"),
             tui: matches.get_flag("tui"),
             output: matches.get_one::<String>("output").map(PathBuf::from),
+            project: matches.get_one::<String>("project").map(PathBuf::from),
+            save_project: matches.get_one::<String>("save-project").map(PathBuf::from),
             format: matches.get_one::<String>("format").cloned(),
             detailed: matches.get_flag("detailed"),
             metrics: matches.get_flag("metrics"),
@@ -124,6 +137,30 @@ fn main() -> io::Result<()> {
             eprintln!("{}: failed to analyze binary: {}", file_path.display(), e);
             std::process::exit(1);
         });
+
+        let loaded_project = opts.project.as_ref().map(|project_path| {
+            AnalysisProject::load(project_path).unwrap_or_else(|e| {
+                eprintln!(
+                    "{}: failed to load project {}: {}",
+                    file_path.display(),
+                    project_path.display(),
+                    e
+                );
+                std::process::exit(1);
+            })
+        });
+
+        if let Some(project) = &loaded_project {
+            if !opts.tui {
+                println!(
+                    "[PROJECT] Loaded {}: {} names, {} comments, {} bookmarks",
+                    opts.project.as_ref().unwrap().display(),
+                    project.user_names.len(),
+                    project.comments.len(),
+                    project.bookmarks.len()
+                );
+            }
+        }
 
         if !opts.tui {
             println!(
@@ -249,6 +286,35 @@ fn main() -> io::Result<()> {
             if let Err(e) = export_result {
                 eprintln!("[ERROR] Export failed: {}", e);
                 std::process::exit(1);
+            }
+        }
+
+        if let Some(project_path) = &opts.save_project {
+            let mut project = loaded_project
+                .clone()
+                .unwrap_or_else(|| AnalysisProject::from_binary(file_path, &data));
+            if project.functions.is_empty() {
+                if let Some(cfg) = &cfg {
+                    project.functions = cfg
+                        .function_summaries()
+                        .into_iter()
+                        .map(|function| disassembler::project::ProjectFunction {
+                            entry: function.entry.0,
+                            name: None,
+                        })
+                        .collect();
+                }
+            }
+            project.save(project_path)?;
+            if !opts.tui {
+                println!(
+                    "[PROJECT] Saved {}: {} names, {} comments, {} bookmarks, {} functions",
+                    project_path.display(),
+                    project.user_names.len(),
+                    project.comments.len(),
+                    project.bookmarks.len(),
+                    project.functions.len()
+                );
             }
         }
 
