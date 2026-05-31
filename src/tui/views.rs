@@ -172,6 +172,7 @@ fn render_instruction_details(f: &mut Frame, app: &App, area: Rect) {
         // Add basic graph context if available (simplified)
         if let Some(cfg) = &app.cfg {
             let addr = crate::graph::Address(instr.address);
+            let context = app.address_context(addr);
 
             // Find containing block
             for (block_addr, block) in &cfg.blocks {
@@ -200,6 +201,58 @@ fn render_instruction_details(f: &mut Frame, app: &App, area: Rect) {
                     }
                     break;
                 }
+            }
+
+            details_text.push(Line::from(""));
+            details_text.push(Line::from(vec![Span::styled(
+                "Address Context:",
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            )]));
+
+            if let Some(function) = context.containing_function {
+                details_text.push(Line::from(vec![
+                    Span::styled("Function: ", Style::default().fg(Color::Cyan)),
+                    Span::raw(format!("{:#014x}", function.entry.0)),
+                ]));
+            }
+
+            if let Some(name) = context.nearest_name {
+                details_text.push(Line::from(vec![
+                    Span::styled("Nearest Name: ", Style::default().fg(Color::Cyan)),
+                    Span::raw(format!("{} {}", name.kind(), name.label())),
+                ]));
+            }
+
+            if !context.incoming_xrefs.is_empty() {
+                details_text.push(Line::from(vec![
+                    Span::styled("Incoming Xrefs: ", Style::default().fg(Color::Cyan)),
+                    Span::raw(
+                        context
+                            .incoming_xrefs
+                            .iter()
+                            .take(4)
+                            .map(|xref| format!("{} {}", xref.kind(), xref.from))
+                            .collect::<Vec<_>>()
+                            .join(", "),
+                    ),
+                ]));
+            }
+
+            if !context.outgoing_xrefs.is_empty() {
+                details_text.push(Line::from(vec![
+                    Span::styled("Outgoing Xrefs: ", Style::default().fg(Color::Cyan)),
+                    Span::raw(
+                        context
+                            .outgoing_xrefs
+                            .iter()
+                            .take(4)
+                            .map(|xref| format!("{} {}", xref.kind(), xref.to))
+                            .collect::<Vec<_>>()
+                            .join(", "),
+                    ),
+                ]));
             }
         }
 

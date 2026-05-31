@@ -220,4 +220,56 @@ mod tests {
         assert!(!app.address_jump_mode);
         assert_eq!(app.back_stack.len(), 1);
     }
+
+    #[test]
+    fn address_context_reports_function_name_and_xrefs() {
+        let mut cfg = ControlFlowGraph::new();
+        cfg.build_from_instructions(vec![
+            cfg_instruction(0x1000, "call", "0000000000002000h", 5),
+            cfg_instruction(0x1005, "ret", "", 1),
+            cfg_instruction(0x2000, "push", "rbp", 1),
+            cfg_instruction(0x2001, "mov", "rbp,rsp", 3),
+            cfg_instruction(0x2004, "ret", "", 1),
+        ]);
+
+        let analysis = BinaryAnalysis {
+            symbols: vec![SymbolSummary {
+                address: Some(0x2000),
+                name: "callee".to_string(),
+                kind: SymbolKind::Function,
+            }],
+            ..BinaryAnalysis::default()
+        };
+
+        let app = App::new(
+            vec![
+                instruction(0x1000, "call 0000000000002000h", 5),
+                instruction(0x1005, "ret", 1),
+                instruction(0x2000, "push rbp", 1),
+                instruction(0x2001, "mov rbp,rsp", 3),
+                instruction(0x2004, "ret", 1),
+            ],
+            Some(cfg),
+            analysis,
+        );
+
+        let context = app.address_context(Address(0x2001));
+
+        assert_eq!(context.block, Some(Address(0x2000)));
+        assert_eq!(
+            context
+                .containing_function
+                .as_ref()
+                .map(|function| function.entry),
+            Some(Address(0x2000))
+        );
+        assert_eq!(
+            context.nearest_name.as_ref().map(NameItem::label),
+            Some("callee".to_string())
+        );
+        assert!(context
+            .incoming_xrefs
+            .iter()
+            .any(|xref| xref.from == Address(0x1000) && xref.to == Address(0x2000)));
+    }
 }

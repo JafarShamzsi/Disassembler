@@ -41,6 +41,16 @@ pub struct NavigationLocation {
     pub graph_block: Option<Address>,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct AddressContext {
+    pub address: Address,
+    pub block: Option<Address>,
+    pub containing_function: Option<FunctionSummary>,
+    pub nearest_name: Option<NameItem>,
+    pub incoming_xrefs: Vec<XrefItem>,
+    pub outgoing_xrefs: Vec<XrefItem>,
+}
+
 impl XrefItem {
     pub(crate) fn kind(&self) -> &'static str {
         match self.edge_type {
@@ -427,6 +437,49 @@ impl App {
         self.restore_location(location);
     }
 
+    pub fn address_context(&self, address: Address) -> AddressContext {
+        let block = self.block_containing_address(address);
+        let reference_address = block.unwrap_or(address);
+
+        let containing_function = self
+            .functions
+            .iter()
+            .filter(|function| function.entry <= address)
+            .max_by_key(|function| function.entry)
+            .cloned();
+
+        let nearest_name = self
+            .names
+            .iter()
+            .filter_map(|name| Some((name.address()?, name)))
+            .filter(|(name_address, _)| *name_address <= address.0)
+            .max_by_key(|(name_address, _)| *name_address)
+            .map(|(_, name)| name.clone());
+
+        let incoming_xrefs = self
+            .xrefs
+            .iter()
+            .filter(|xref| xref.to == reference_address)
+            .cloned()
+            .collect();
+
+        let outgoing_xrefs = self
+            .xrefs
+            .iter()
+            .filter(|xref| xref.from == reference_address)
+            .cloned()
+            .collect();
+
+        AddressContext {
+            address,
+            block,
+            containing_function,
+            nearest_name,
+            incoming_xrefs,
+            outgoing_xrefs,
+        }
+    }
+
     fn push_history(&mut self) {
         let current = self.current_location();
         if self.back_stack.last() != Some(&current) {
@@ -474,6 +527,18 @@ impl App {
         {
             self.instruction_list_state.select(Some(filtered_idx));
         }
+    }
+
+    fn block_containing_address(&self, address: Address) -> Option<Address> {
+        let cfg = self.cfg.as_ref()?;
+
+        cfg.blocks.iter().find_map(|(block_addr, block)| {
+            block
+                .instructions
+                .iter()
+                .any(|instruction| instruction.address == address)
+                .then_some(*block_addr)
+        })
     }
 
     fn find_instruction_by_address(&self, address: Address) -> Option<usize> {

@@ -61,7 +61,7 @@ Acceptance criteria:
 
 ## Phase 2: Real Navigation Model
 
-Status: in progress.
+Status: in progress. Navigation history and address jump are implemented; address context panels are in progress.
 
 Purpose: make the TUI feel like a reverse engineering tool instead of separate lists.
 
