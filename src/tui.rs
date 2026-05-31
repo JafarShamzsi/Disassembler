@@ -5,10 +5,9 @@ use crossterm::{
     },
     execute,
     style::ResetColor,
-    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
+    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use ratatui::{
-    Frame, Terminal,
     backend::{Backend, CrosstermBackend},
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
@@ -16,6 +15,7 @@ use ratatui::{
     widgets::{
         Block, Borders, Clear as RatatuiClear, List, ListItem, ListState, Paragraph, Tabs, Wrap,
     },
+    Frame, Terminal,
 };
 use std::io;
 
@@ -446,10 +446,8 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Result<(
                                     app.graph_view.zoom_in();
                                 }
                             }
-                            KeyCode::Char('-') => {
-                                if app.current_tab == Tab::GraphView {
-                                    app.graph_view.zoom_out();
-                                }
+                            KeyCode::Char('-') if app.current_tab == Tab::GraphView => {
+                                app.graph_view.zoom_out();
                             }
                             _ => {}
                         }
@@ -476,7 +474,7 @@ fn ui(f: &mut Frame, app: &mut App) {
         .split(f.area());
 
     // Render tabs with proper ratatui styling
-    let tab_titles: Vec<Line> = vec!["Instructions", "Control Flow", "Graph View", "Hex Dump"]
+    let tab_titles: Vec<Line> = ["Instructions", "Control Flow", "Graph View", "Hex Dump"]
         .iter()
         .cloned()
         .map(Line::from)

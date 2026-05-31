@@ -29,7 +29,7 @@ pub fn disasm(bytes: &[u8], opts: DisasmOpts) -> Vec<Instruction> {
         let instr = decoder.decode();
         let ip = instr.ip();
         let offset = (ip - opts.base_address) as usize;
-        let size = instr.len() as usize;
+        let size = instr.len();
 
         if offset + size > bytes.len() {
             break;

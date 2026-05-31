@@ -1,23 +1,12 @@
 use clap::{Arg, Command};
+use disassembler::arch::x86::{disasm, DisasmOpts};
+use disassembler::export::{export_auto_format, ExportFormat, Exporter};
+use disassembler::graph::{Address, ControlFlowGraph, Instruction as CfgInstruction};
+use disassembler::parser::{self, TextSection};
+use disassembler::tui;
 use std::fs::File;
 use std::io::{self, BufReader, Read};
 use std::path::PathBuf;
-
-// Clean module declarations
-pub mod arch;
-pub mod export;
-pub mod graph;
-pub mod graph_renderer;
-pub mod graph_view;
-pub mod parser;
-pub mod tui;
-
-pub use crate::arch::x86::Instruction;
-// Simple, clean imports
-use arch::x86::{DisasmOpts, disasm}; // Use the legacy functions directly
-use export::{ExportFormat, Exporter, export_auto_format};
-use graph::{Address, ControlFlowGraph, Instruction as CfgInstruction};
-use parser::TextSection;
 
 #[derive(Debug, Clone)]
 pub struct Opts {
@@ -42,7 +31,7 @@ pub struct Opts {
 
 impl Opts {
     pub fn parse() -> Self {
-        let matches = Command::new("decompiler")
+        let matches = Command::new("disassembler")
             .arg(Arg::new("raw").long("raw").action(clap::ArgAction::SetTrue))
             .arg(Arg::new("cfg").long("cfg").action(clap::ArgAction::SetTrue))
             .arg(Arg::new("tui").long("tui").action(clap::ArgAction::SetTrue))
@@ -135,7 +124,7 @@ fn main() -> io::Result<()> {
             bitness: 64,
         };
 
-        let instructions = disasm(&bytes, disasm_opts); // Simple call
+        let instructions = disasm(bytes, disasm_opts);
 
         if !opts.tui {
             println!("[INFO] Disassembled {} instructions", instructions.len());
@@ -196,9 +185,7 @@ fn main() -> io::Result<()> {
                     display_functions(cfg);
                 } else if opts.loops {
                     display_loops(cfg);
-                } else if opts.detailed {
-                    cfg.display_ascii();
-                } else if opts.cfg {
+                } else if opts.detailed || opts.cfg {
                     cfg.display_ascii();
                 }
             }

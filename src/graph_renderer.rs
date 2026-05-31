@@ -1,10 +1,10 @@
 use ratatui::{
-    Frame,
     buffer::Buffer,
     layout::Rect,
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Clear, Paragraph, Widget},
+    Frame,
 };
 
 use crate::graph::{ControlFlowGraph, EdgeType};
@@ -259,13 +259,8 @@ impl<'a> Widget for GraphWidget<'a> {
     }
 }
 
+#[derive(Default)]
 pub struct GraphRenderer {}
-
-impl Default for GraphRenderer {
-    fn default() -> Self {
-        Self {}
-    }
-}
 
 impl GraphRenderer {
     pub fn render_graph_view(

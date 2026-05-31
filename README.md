@@ -5,8 +5,9 @@ A modern, feature-rich binary disassembler written in Rust with an interactive T
 ## Features
 
 ### **Disassembly Engine**
-- **Multi-architecture support**: x86/x86-64 with extensible architecture framework
-- **Binary format parsing**: PE, ELF, and other formats via goblin
+- **x86/x86-64 support**: x86/x86-64 disassembly via iced-x86
+- **Extensible architecture framework**: ARM/AArch64 disassembler module is present but not yet wired into the CLI
+- **Binary format parsing**: PE `.text` extraction via goblin
 - **Instruction analysis**: Comprehensive instruction decoding using iced-x86
 - **Section analysis**: Automatic .text section extraction and analysis
 
@@ -23,15 +24,15 @@ A modern, feature-rich binary disassembler written in Rust with an interactive T
 - **Viewport controls**: Pan (WASD), zoom (+/-), center (C)
 
 ### **Analysis Features**
-- **Function analysis**: Basic block and edge analysis
-- **Loop detection**: Back-edge based loop identification
+- **Basic block analysis**: Block and edge analysis for control-flow exploration
+- **Loop detection**: Experimental back-edge based loop identification
 - **Metrics calculation**: Comprehensive graph statistics
-- **Dead code analysis**: Unreachable block detection (planned)
+- **Planned analysis**: Function discovery, call graph, ELF/Mach-O support, and unreachable block detection
 
 ## Quick Start
 
 ### Prerequisites
-- Rust 1.70+ (2024 edition)
+- Rust 1.70+
 - Linux/macOS/Windows
 
 ### Installation
@@ -46,18 +47,18 @@ cargo build --release
 #### Command Line Interface
 ```bash
 # Basic disassembly
-./target/release/main binary.exe
+./target/release/disassembler binary.exe
 
 # Control flow graph with metrics
-./target/release/main binary.exe --cfg --metrics
+./target/release/disassembler binary.exe --cfg --metrics
 
 # Export analysis
-./target/release/main binary.exe --cfg --output analysis.json --format json
+./target/release/disassembler binary.exe --cfg --output analysis.json --format json
 ```
 
 #### Interactive TUI
 ```bash
-./target/release/main binary.exe --tui
+./target/release/disassembler binary.exe --tui
 ```
 #### Screenshots
 
@@ -137,10 +138,10 @@ cargo test           # Run tests
 ### Testing
 ```bash
 # Test with sample binary
-./target/debug/main tests/notepad.exe --cfg --metrics
+./target/debug/disassembler tests/notepad.exe --cfg --metrics
 
 # Interactive testing
-./target/debug/main tests/notepad.exe --tui
+./target/debug/disassembler tests/notepad.exe --tui
 ```
 
 ## Troubleshooting
@@ -148,12 +149,12 @@ cargo test           # Run tests
 ### Terminal Issues
 If you experience terminal corruption or ANSI escape sequences:
 
-1. **Emergency reset**: `./emergency_reset.sh`
-2. **Use safe wrapper**: `./safe_run.sh` instead of direct execution
+1. **Emergency reset**: `./scripts/emergency_reset.sh`
+2. **Use safe wrapper**: `./scripts/safe_run.sh` instead of direct execution
 3. **Manual reset**: `reset && clear`
 
 ### Common Issues
-- **Build errors**: Ensure Rust 2024 edition support
+- **Build errors**: Ensure a supported Rust toolchain is installed
 - **Binary parsing**: Check file format compatibility
 - **Performance**: Use `--release` build for large binaries
 

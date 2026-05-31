@@ -9,20 +9,16 @@ impl ArchDisassembler for ARMDisassembler {
 
         // Create capstone engine based on architecture
         let cs = match config.arch {
-            Architecture::ARM => {
-                Capstone::new()
-                    .arm()
-                    .mode(arch::arm::ArchMode::Arm)
-                    .detail(true)
-                    .build()
-            },
-            Architecture::AArch64 => {
-                Capstone::new()
-                    .arm64()
-                    .mode(arch::arm64::ArchMode::Arm)
-                    .detail(true)
-                    .build()
-            },
+            Architecture::ARM => Capstone::new()
+                .arm()
+                .mode(arch::arm::ArchMode::Arm)
+                .detail(true)
+                .build(),
+            Architecture::AArch64 => Capstone::new()
+                .arm64()
+                .mode(arch::arm64::ArchMode::Arm)
+                .detail(true)
+                .build(),
             _ => return instructions, // Unsupported architecture
         };
 
@@ -75,12 +71,41 @@ impl ArchDisassembler for ARMDisassembler {
         let mnemonic = instruction.split_whitespace().next().unwrap_or("");
         matches!(
             mnemonic,
-            "b" | "b.eq" | "b.ne" | "b.cs" | "b.hs" | "b.cc" | "b.lo"
-            | "b.mi" | "b.pl" | "b.vs" | "b.vc" | "b.hi" | "b.ls"
-            | "b.ge" | "b.lt" | "b.gt" | "b.le" | "b.al" | "br"
-            | "beq" | "bne" | "bcs" | "bhs" | "bcc" | "blo"
-            | "bmi" | "bpl" | "bvs" | "bvc" | "bhi" | "bls"
-            | "bge" | "blt" | "bgt" | "ble" | "bal"
+            "b" | "b.eq"
+                | "b.ne"
+                | "b.cs"
+                | "b.hs"
+                | "b.cc"
+                | "b.lo"
+                | "b.mi"
+                | "b.pl"
+                | "b.vs"
+                | "b.vc"
+                | "b.hi"
+                | "b.ls"
+                | "b.ge"
+                | "b.lt"
+                | "b.gt"
+                | "b.le"
+                | "b.al"
+                | "br"
+                | "beq"
+                | "bne"
+                | "bcs"
+                | "bhs"
+                | "bcc"
+                | "blo"
+                | "bmi"
+                | "bpl"
+                | "bvs"
+                | "bvc"
+                | "bhi"
+                | "bls"
+                | "bge"
+                | "blt"
+                | "bgt"
+                | "ble"
+                | "bal"
         )
     }
 

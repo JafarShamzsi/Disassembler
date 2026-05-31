@@ -100,6 +100,12 @@ impl GraphViewport {
     }
 }
 
+impl Default for GraphViewport {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[derive(Debug)]
 pub struct GraphView {
     pub blocks: HashMap<Address, BlockLayout>,
@@ -395,6 +401,12 @@ impl GraphView {
         } else {
             BlockType::Normal
         }
+    }
+}
+
+impl Default for GraphView {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

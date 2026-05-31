@@ -216,15 +216,15 @@ impl ControlFlowGraph {
         let operands = operands.trim();
 
         // Direct hex addresses (0x...)
-        if operands.starts_with("0x") {
-            return u64::from_str_radix(&operands[2..], 16).ok();
+        if let Some(addr) = operands.strip_prefix("0x") {
+            return u64::from_str_radix(addr, 16).ok();
         }
 
         // Relative addresses (rel ...)
-        if operands.starts_with("rel ") {
-            let addr_part = &operands[4..].trim();
-            if addr_part.starts_with("0x") {
-                return u64::from_str_radix(&addr_part[2..], 16).ok();
+        if let Some(addr_part) = operands.strip_prefix("rel ") {
+            let addr_part = addr_part.trim();
+            if let Some(addr) = addr_part.strip_prefix("0x") {
+                return u64::from_str_radix(addr, 16).ok();
             }
         }
 
@@ -235,8 +235,8 @@ impl ControlFlowGraph {
 
         // Look for any hex address in the operands
         for part in operands.split_whitespace() {
-            if part.starts_with("0x") {
-                if let Ok(addr) = u64::from_str_radix(&part[2..], 16) {
+            if let Some(addr_part) = part.strip_prefix("0x") {
+                if let Ok(addr) = u64::from_str_radix(addr_part, 16) {
                     return Some(addr);
                 }
             }
@@ -510,5 +510,11 @@ impl ControlFlowGraph {
             }
             println!();
         }
+    }
+}
+
+impl Default for ControlFlowGraph {
+    fn default() -> Self {
+        Self::new()
     }
 }
