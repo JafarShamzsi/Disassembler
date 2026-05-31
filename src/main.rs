@@ -2,9 +2,9 @@ use clap::{Arg, Command};
 use disassembler::arch::arm::ARMDisassembler;
 use disassembler::arch::x86::{disasm, DisasmOpts};
 use disassembler::arch::{ArchConfig, ArchDisassembler, Architecture};
-use disassembler::export::{export_auto_format_with_metadata, ExportFormat, Exporter};
+use disassembler::export::{export_auto_format_with_metadata_and_analysis, ExportFormat, Exporter};
 use disassembler::graph::{Address, ControlFlowGraph, Instruction as CfgInstruction};
-use disassembler::parser::{self, AnalyzedBinary, BinaryMetadata};
+use disassembler::parser::{self, AnalyzedBinary, BinaryAnalysis, BinaryMetadata};
 use disassembler::tui;
 use std::fs::File;
 use std::io::{self, BufReader, Read};
@@ -25,6 +25,8 @@ pub struct Opts {
     pub metrics: bool,
 
     pub functions: bool,
+
+    pub names: bool,
 
     pub loops: bool,
 
@@ -65,6 +67,11 @@ impl Opts {
                     .action(clap::ArgAction::SetTrue),
             )
             .arg(
+                Arg::new("names")
+                    .long("names")
+                    .action(clap::ArgAction::SetTrue),
+            )
+            .arg(
                 Arg::new("loops")
                     .long("loops")
                     .action(clap::ArgAction::SetTrue),
@@ -81,6 +88,7 @@ impl Opts {
             detailed: matches.get_flag("detailed"),
             metrics: matches.get_flag("metrics"),
             functions: matches.get_flag("functions"),
+            names: matches.get_flag("names"),
             loops: matches.get_flag("loops"),
             files: matches
                 .get_many::<String>("files")
@@ -108,7 +116,11 @@ fn main() -> io::Result<()> {
             buf
         };
 
-        let AnalyzedBinary { metadata, text } = parser::analyze_binary(&data).unwrap_or_else(|e| {
+        let AnalyzedBinary {
+            metadata,
+            text,
+            analysis,
+        } = parser::analyze_binary(&data).unwrap_or_else(|e| {
             eprintln!("{}: failed to analyze binary: {}", file_path.display(), e);
             std::process::exit(1);
         });
@@ -186,6 +198,8 @@ fn main() -> io::Result<()> {
                     display_metrics(cfg);
                 } else if opts.functions {
                     display_functions(cfg);
+                } else if opts.names {
+                    display_names(&analysis);
                 } else if opts.loops {
                     display_loops(cfg);
                 } else if opts.detailed || opts.cfg {
@@ -193,7 +207,9 @@ fn main() -> io::Result<()> {
                 }
             }
             None => {
-                if opts.cfg {
+                if opts.names {
+                    display_names(&analysis);
+                } else if opts.cfg {
                     println!("[ERROR] Use --cfg flag to enable control flow analysis");
                 }
             }
@@ -205,26 +221,29 @@ fn main() -> io::Result<()> {
             let export_result = if let Some(format_str) = &opts.format {
                 let format = parse_export_format(format_str);
                 match &cfg {
-                    Some(cfg) => Exporter::export_with_cfg_and_metadata(
+                    Some(cfg) => Exporter::export_with_cfg_metadata_and_analysis(
                         &instructions,
                         cfg,
                         format,
                         output_path.to_str().unwrap(),
                         Some(&metadata),
+                        Some(&analysis),
                     ),
-                    None => Exporter::export_instructions_with_metadata(
+                    None => Exporter::export_instructions_with_metadata_and_analysis(
                         &instructions,
                         format,
                         output_path.to_str().unwrap(),
                         Some(&metadata),
+                        Some(&analysis),
                     ),
                 }
             } else {
-                export_auto_format_with_metadata(
+                export_auto_format_with_metadata_and_analysis(
                     &instructions,
                     cfg.as_ref(),
                     output_path.to_str().unwrap(),
                     Some(&metadata),
+                    Some(&analysis),
                 )
             };
 
@@ -239,6 +258,7 @@ fn main() -> io::Result<()> {
             && !opts.detailed
             && !opts.metrics
             && !opts.functions
+            && !opts.names
             && !opts.loops
             && opts.output.is_none()
         {
@@ -258,6 +278,80 @@ fn main() -> io::Result<()> {
     }
 
     Ok(())
+}
+
+fn display_names(analysis: &BinaryAnalysis) {
+    println!("\n[NAMES] Binary Names:");
+
+    println!(
+        "  Imports: {}  Symbols: {}  Strings: {}",
+        analysis.imports.len(),
+        analysis.symbols.len(),
+        analysis.strings.len()
+    );
+
+    println!("\n[IMPORTS]");
+    if analysis.imports.is_empty() {
+        println!("  No imports found");
+    } else {
+        for import in analysis.imports.iter().take(30) {
+            let address = import
+                .address
+                .map(|address| format!("{address:#x}"))
+                .unwrap_or_else(|| "unknown".to_string());
+            let library = import.library.as_deref().unwrap_or("unknown");
+            println!("  {:>14}  {:<24} {}", address, library, import.name);
+        }
+        if analysis.imports.len() > 30 {
+            println!("  ... {} more imports", analysis.imports.len() - 30);
+        }
+    }
+
+    println!("\n[SYMBOLS]");
+    if analysis.symbols.is_empty() {
+        println!("  No symbols found");
+    } else {
+        for symbol in analysis.symbols.iter().take(30) {
+            let address = symbol
+                .address
+                .map(|address| format!("{address:#x}"))
+                .unwrap_or_else(|| "unknown".to_string());
+            println!(
+                "  {:>14}  {:<8} {}",
+                address,
+                symbol.kind.as_str(),
+                symbol.name
+            );
+        }
+        if analysis.symbols.len() > 30 {
+            println!("  ... {} more symbols", analysis.symbols.len() - 30);
+        }
+    }
+
+    println!("\n[STRINGS]");
+    if analysis.strings.is_empty() {
+        println!("  No printable strings found");
+    } else {
+        for string in analysis.strings.iter().take(30) {
+            println!(
+                "  {:#014x}  {}",
+                string.address,
+                truncate_for_display(&string.value, 96)
+            );
+        }
+        if analysis.strings.len() > 30 {
+            println!("  ... {} more strings", analysis.strings.len() - 30);
+        }
+    }
+}
+
+fn truncate_for_display(value: &str, max_chars: usize) -> String {
+    let mut chars = value.chars();
+    let mut truncated: String = chars.by_ref().take(max_chars).collect();
+    if chars.next().is_some() {
+        truncated.push_str("...");
+    }
+    truncated
 }
 
 fn disassemble_text(

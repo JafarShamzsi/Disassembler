@@ -1,6 +1,6 @@
 use crate::arch;
 use crate::graph::ControlFlowGraph;
-use crate::parser::BinaryMetadata;
+use crate::parser::{BinaryAnalysis, BinaryMetadata};
 use arch::x86::Instruction;
 use serde::{Deserialize, Serialize};
 use std::fs::File;
@@ -99,6 +99,9 @@ pub struct ExportMetadata {
     pub architecture: String,
     pub binary_format: Option<String>,
     pub entry_point: Option<u64>,
+    pub import_count: usize,
+    pub symbol_count: usize,
+    pub string_count: usize,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -125,10 +128,31 @@ impl Exporter {
         path: &str,
         binary_metadata: Option<&BinaryMetadata>,
     ) -> Result<(), Box<dyn std::error::Error>> {
+        Self::export_instructions_with_metadata_and_analysis(
+            instructions,
+            format,
+            path,
+            binary_metadata,
+            None,
+        )
+    }
+
+    pub fn export_instructions_with_metadata_and_analysis(
+        instructions: &[Instruction],
+        format: ExportFormat,
+        path: &str,
+        binary_metadata: Option<&BinaryMetadata>,
+        binary_analysis: Option<&BinaryAnalysis>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         let exportable: Vec<ExportableInstruction> =
             instructions.iter().map(|i| i.into()).collect();
 
-        let metadata = Self::create_metadata(&exportable, None, binary_metadata);
+        let metadata = Self::create_metadata_with_analysis(
+            &exportable,
+            None,
+            binary_metadata,
+            binary_analysis,
+        );
         let export_data = ExportData {
             metadata,
             instructions: exportable,
@@ -163,6 +187,24 @@ impl Exporter {
         path: &str,
         binary_metadata: Option<&BinaryMetadata>,
     ) -> Result<(), Box<dyn std::error::Error>> {
+        Self::export_with_cfg_metadata_and_analysis(
+            instructions,
+            cfg,
+            format,
+            path,
+            binary_metadata,
+            None,
+        )
+    }
+
+    pub fn export_with_cfg_metadata_and_analysis(
+        instructions: &[Instruction],
+        cfg: &ControlFlowGraph,
+        format: ExportFormat,
+        path: &str,
+        binary_metadata: Option<&BinaryMetadata>,
+        binary_analysis: Option<&BinaryAnalysis>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         let exportable: Vec<ExportableInstruction> =
             instructions.iter().map(|i| i.into()).collect();
 
@@ -172,7 +214,12 @@ impl Exporter {
             entry_points: cfg.blocks.keys().map(|addr| addr.0).collect(),
         });
 
-        let metadata = Self::create_metadata(&exportable, cfg_info.as_ref(), binary_metadata);
+        let metadata = Self::create_metadata_with_analysis(
+            &exportable,
+            cfg_info.as_ref(),
+            binary_metadata,
+            binary_analysis,
+        );
         let export_data = ExportData {
             metadata,
             instructions: exportable,
@@ -183,16 +230,21 @@ impl Exporter {
             ExportFormat::Json => Self::export_json(&export_data, path),
             ExportFormat::Html => Self::export_html_with_cfg(&export_data, cfg, path),
             ExportFormat::Dot => Self::export_dot(cfg, path),
-            _ => {
-                Self::export_instructions_with_metadata(instructions, format, path, binary_metadata)
-            }
+            _ => Self::export_instructions_with_metadata_and_analysis(
+                instructions,
+                format,
+                path,
+                binary_metadata,
+                binary_analysis,
+            ),
         }
     }
 
-    fn create_metadata(
+    fn create_metadata_with_analysis(
         instructions: &[ExportableInstruction],
         _cfg_info: Option<&CfgExportData>,
         binary_metadata: Option<&BinaryMetadata>,
+        binary_analysis: Option<&BinaryAnalysis>,
     ) -> ExportMetadata {
         let (min_addr, max_addr) = if instructions.is_empty() {
             (0, 0)
@@ -215,6 +267,15 @@ impl Exporter {
                 .unwrap_or_else(|| "x86_64".to_string()),
             binary_format: binary_metadata.map(|metadata| metadata.format.to_string()),
             entry_point: binary_metadata.and_then(|metadata| metadata.entry_point),
+            import_count: binary_analysis
+                .map(|analysis| analysis.imports.len())
+                .unwrap_or_default(),
+            symbol_count: binary_analysis
+                .map(|analysis| analysis.symbols.len())
+                .unwrap_or_default(),
+            string_count: binary_analysis
+                .map(|analysis| analysis.strings.len())
+                .unwrap_or_default(),
         }
     }
 
@@ -585,6 +646,16 @@ pub fn export_auto_format_with_metadata(
     path: &str,
     binary_metadata: Option<&BinaryMetadata>,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    export_auto_format_with_metadata_and_analysis(instructions, cfg, path, binary_metadata, None)
+}
+
+pub fn export_auto_format_with_metadata_and_analysis(
+    instructions: &[Instruction],
+    cfg: Option<&ControlFlowGraph>,
+    path: &str,
+    binary_metadata: Option<&BinaryMetadata>,
+    binary_analysis: Option<&BinaryAnalysis>,
+) -> Result<(), Box<dyn std::error::Error>> {
     let path_obj = Path::new(path);
     let extension = path_obj
         .extension()
@@ -595,11 +666,20 @@ pub fn export_auto_format_with_metadata(
         .ok_or(format!("Unsupported export format: {}", extension))?;
 
     match cfg {
-        Some(cfg) => {
-            Exporter::export_with_cfg_and_metadata(instructions, cfg, format, path, binary_metadata)
-        }
-        None => {
-            Exporter::export_instructions_with_metadata(instructions, format, path, binary_metadata)
-        }
+        Some(cfg) => Exporter::export_with_cfg_metadata_and_analysis(
+            instructions,
+            cfg,
+            format,
+            path,
+            binary_metadata,
+            binary_analysis,
+        ),
+        None => Exporter::export_instructions_with_metadata_and_analysis(
+            instructions,
+            format,
+            path,
+            binary_metadata,
+            binary_analysis,
+        ),
     }
 }

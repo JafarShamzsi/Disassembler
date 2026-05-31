@@ -26,9 +26,10 @@ A modern, feature-rich binary disassembler written in Rust with an interactive T
 
 ### **Analysis Features**
 - **Basic block analysis**: Block and edge analysis for control-flow exploration
+- **Names analysis**: Imports, exported/debug symbols, and printable strings for quick orientation
 - **Loop detection**: Experimental back-edge based loop identification
 - **Metrics calculation**: Comprehensive graph statistics
-- **Planned analysis**: Function discovery, call graph, Mach-O support, and unreachable block detection
+- **Planned analysis**: Call graph, Mach-O support, and unreachable block detection
 
 ## Quick Start
 
@@ -52,6 +53,9 @@ cargo build --release
 
 # Control flow graph with metrics
 ./target/release/disassembler binary.exe --cfg --metrics
+
+# Imports, symbols, and strings
+./target/release/disassembler binary.exe --names
 
 # Export analysis
 ./target/release/disassembler binary.exe --cfg --output analysis.json --format json
