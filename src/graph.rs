@@ -49,6 +49,15 @@ pub struct Edge {
     pub edge_type: EdgeType,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FunctionSummary {
+    pub entry: Address,
+    pub block_count: usize,
+    pub instruction_count: usize,
+    pub edge_count: usize,
+    pub caller_count: usize,
+}
+
 pub struct ControlFlowGraph {
     pub blocks: HashMap<Address, BasicBlock>,
     pub edges: Vec<Edge>,
@@ -220,11 +229,18 @@ impl ControlFlowGraph {
             return u64::from_str_radix(addr, 16).ok();
         }
 
+        if let Some(addr) = parse_nasm_hex(operands) {
+            return Some(addr);
+        }
+
         // Relative addresses (rel ...)
         if let Some(addr_part) = operands.strip_prefix("rel ") {
             let addr_part = addr_part.trim();
             if let Some(addr) = addr_part.strip_prefix("0x") {
                 return u64::from_str_radix(addr, 16).ok();
+            }
+            if let Some(addr) = parse_nasm_hex(addr_part) {
+                return Some(addr);
             }
         }
 
@@ -235,10 +251,16 @@ impl ControlFlowGraph {
 
         // Look for any hex address in the operands
         for part in operands.split_whitespace() {
+            let part = part.trim_matches(|ch: char| {
+                matches!(ch, '[' | ']' | '(' | ')' | ',' | ':' | '+' | '-')
+            });
             if let Some(addr_part) = part.strip_prefix("0x") {
                 if let Ok(addr) = u64::from_str_radix(addr_part, 16) {
                     return Some(addr);
                 }
+            }
+            if let Some(addr) = parse_nasm_hex(part) {
+                return Some(addr);
             }
         }
 
@@ -511,10 +533,184 @@ impl ControlFlowGraph {
             println!();
         }
     }
+
+    pub fn function_summaries(&self) -> Vec<FunctionSummary> {
+        let entries = self.function_entries();
+        let mut summaries: Vec<FunctionSummary> = entries
+            .iter()
+            .map(|entry| self.summarize_function(*entry, &entries))
+            .collect();
+
+        summaries.sort_by_key(|summary| summary.entry);
+        summaries
+    }
+
+    fn function_entries(&self) -> HashSet<Address> {
+        let mut entries = HashSet::new();
+
+        if let Some(first) = self.blocks.keys().min().copied() {
+            entries.insert(first);
+        }
+
+        for (&addr, block) in &self.blocks {
+            if is_x86_prologue(block) {
+                entries.insert(addr);
+            }
+        }
+
+        for edge in &self.edges {
+            if edge.edge_type == EdgeType::Call && self.blocks.contains_key(&edge.to) {
+                entries.insert(edge.to);
+            }
+        }
+
+        entries
+    }
+
+    fn summarize_function(
+        &self,
+        entry: Address,
+        function_entries: &HashSet<Address>,
+    ) -> FunctionSummary {
+        let mut visited = HashSet::new();
+        let mut stack = vec![entry];
+
+        while let Some(addr) = stack.pop() {
+            if !visited.insert(addr) {
+                continue;
+            }
+
+            let Some(block) = self.blocks.get(&addr) else {
+                continue;
+            };
+
+            for successor in &block.successors {
+                if *successor != entry && function_entries.contains(successor) {
+                    continue;
+                }
+                stack.push(*successor);
+            }
+        }
+
+        let instruction_count = visited
+            .iter()
+            .filter_map(|addr| self.blocks.get(addr))
+            .map(|block| block.instructions.len())
+            .sum();
+
+        let edge_count = self
+            .edges
+            .iter()
+            .filter(|edge| visited.contains(&edge.from) && visited.contains(&edge.to))
+            .count();
+
+        let caller_count = self
+            .edges
+            .iter()
+            .filter(|edge| edge.edge_type == EdgeType::Call && edge.to == entry)
+            .map(|edge| edge.from)
+            .collect::<HashSet<_>>()
+            .len();
+
+        FunctionSummary {
+            entry,
+            block_count: visited.len(),
+            instruction_count,
+            edge_count,
+            caller_count,
+        }
+    }
 }
 
 impl Default for ControlFlowGraph {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+fn is_x86_prologue(block: &BasicBlock) -> bool {
+    let Some(first) = block.instructions.first() else {
+        return false;
+    };
+    let Some(second) = block.instructions.get(1) else {
+        return false;
+    };
+
+    first.mnemonic.eq_ignore_ascii_case("push")
+        && first.operands.contains("rbp")
+        && second.mnemonic.eq_ignore_ascii_case("mov")
+        && second.operands.contains("rbp")
+        && second.operands.contains("rsp")
+}
+
+fn parse_nasm_hex(token: &str) -> Option<u64> {
+    let token =
+        token.trim_matches(|ch: char| matches!(ch, '[' | ']' | '(' | ')' | ',' | ':' | '+' | '-'));
+    let digits = token
+        .strip_suffix('h')
+        .or_else(|| token.strip_suffix('H'))?;
+
+    if digits.is_empty() || !digits.chars().all(|ch| ch.is_ascii_hexdigit()) {
+        return None;
+    }
+
+    u64::from_str_radix(digits, 16).ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn instr(address: u64, mnemonic: &str, operands: &str, size: usize) -> Instruction {
+        Instruction {
+            address: Address(address),
+            mnemonic: mnemonic.to_string(),
+            operands: operands.to_string(),
+            bytes: vec![0x90; size],
+        }
+    }
+
+    #[test]
+    fn summarizes_inferred_functions_from_calls() {
+        let mut cfg = ControlFlowGraph::new();
+        cfg.build_from_instructions(vec![
+            instr(0x1000, "call", "0x2000", 5),
+            instr(0x1005, "ret", "", 1),
+            instr(0x2000, "push", "rbp", 1),
+            instr(0x2001, "mov", "rbp,rsp", 3),
+            instr(0x2004, "ret", "", 1),
+        ]);
+
+        let summaries = cfg.function_summaries();
+
+        assert!(summaries
+            .iter()
+            .any(|summary| summary.entry == Address(0x1000)));
+        let callee = summaries
+            .iter()
+            .find(|summary| summary.entry == Address(0x2000))
+            .unwrap();
+        assert_eq!(callee.caller_count, 1);
+        assert_eq!(callee.instruction_count, 3);
+    }
+
+    #[test]
+    fn parses_nasm_style_call_targets() {
+        let mut cfg = ControlFlowGraph::new();
+        cfg.build_from_instructions(vec![
+            instr(0x1000, "call", "0000000000002000h", 5),
+            instr(0x1005, "ret", "", 1),
+            instr(0x2000, "push", "rbp", 1),
+            instr(0x2001, "mov", "rbp,rsp", 3),
+            instr(0x2004, "ret", "", 1),
+        ]);
+
+        let callee = cfg
+            .function_summaries()
+            .into_iter()
+            .find(|summary| summary.entry == Address(0x2000))
+            .unwrap();
+
+        assert_eq!(callee.caller_count, 1);
     }
 }

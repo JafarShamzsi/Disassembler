@@ -18,7 +18,8 @@ A modern, feature-rich binary disassembler written in Rust with an interactive T
 - **Export support**: JSON, CSV, HTML, Markdown, DOT, and Assembly formats
 
 ### **Interactive TUI**
-- **Multi-tab interface**: Instructions, Control Flow, Graph View, Hex Dump
+- **Multi-tab interface**: Instructions, Functions, Control Flow, Graph View, Hex Dump
+- **Function browser**: Inferred function entries with caller counts and jump-to-entry navigation
 - **Graph navigation**: Arrow key navigation between connected blocks
 - **Search functionality**: Fast instruction search with filtering
 - **Viewport controls**: Pan (WASD), zoom (+/-), center (C)
@@ -71,7 +72,9 @@ cargo build --release
 
 **TUI Controls:**
 - `Tab`: Switch between views
-- `3`: Jump to Graph View
+- `2`: Jump to Functions
+- `4`: Jump to Graph View
+- `Enter`: Jump to the selected function entry from the Functions tab
 - `Arrow Keys`: Navigate graph/instructions
 - `WASD`: Pan viewport
 - `+/-`: Zoom

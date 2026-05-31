@@ -20,13 +20,14 @@ use ratatui::{
 use std::io;
 
 use crate::arch::x86::Instruction;
-use crate::graph::ControlFlowGraph;
+use crate::graph::{Address, ControlFlowGraph, FunctionSummary};
 use crate::graph_renderer::GraphRenderer;
 use crate::graph_view::{GraphView, NavigationDirection};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Tab {
     Instructions,
+    Functions,
     ControlFlow,
     GraphView,
     HexDump,
@@ -37,7 +38,9 @@ pub struct App {
     pub cfg: Option<ControlFlowGraph>,
     pub current_tab: Tab,
     pub instruction_list_state: ListState,
+    pub function_list_state: ListState,
     pub selected_instruction: Option<usize>,
+    pub selected_function: Option<usize>,
     pub scroll_offset: usize,
     pub show_help: bool,
     pub search_mode: bool,
@@ -45,6 +48,7 @@ pub struct App {
     pub filtered_instructions: Vec<usize>,
     pub instruction_display_cache: Vec<String>,
     pub last_search_query: String,
+    pub functions: Vec<FunctionSummary>,
     pub graph_view: GraphView,
     pub graph_renderer: GraphRenderer,
 }
@@ -57,6 +61,10 @@ impl App {
             .collect();
 
         let mut graph_view = GraphView::new();
+        let functions = cfg
+            .as_ref()
+            .map(ControlFlowGraph::function_summaries)
+            .unwrap_or_default();
 
         // Initialize graph view with CFG if available
         if let Some(ref cfg) = cfg {
@@ -68,7 +76,9 @@ impl App {
             cfg,
             current_tab: Tab::Instructions,
             instruction_list_state: ListState::default(),
+            function_list_state: ListState::default(),
             selected_instruction: None,
+            selected_function: None,
             scroll_offset: 0,
             show_help: false,
             search_mode: false,
@@ -76,6 +86,7 @@ impl App {
             filtered_instructions: Vec::new(),
             instruction_display_cache,
             last_search_query: String::new(),
+            functions,
             graph_view,
             graph_renderer: GraphRenderer::default(),
         };
@@ -84,6 +95,11 @@ impl App {
             app.instruction_list_state.select(Some(0));
             app.selected_instruction = Some(0);
             app.filtered_instructions = (0..app.instructions.len()).collect();
+        }
+
+        if !app.functions.is_empty() {
+            app.function_list_state.select(Some(0));
+            app.selected_function = Some(0);
         }
 
         app
@@ -126,7 +142,8 @@ impl App {
 
     pub fn next_tab(&mut self) {
         self.current_tab = match self.current_tab {
-            Tab::Instructions => Tab::ControlFlow,
+            Tab::Instructions => Tab::Functions,
+            Tab::Functions => Tab::ControlFlow,
             Tab::ControlFlow => Tab::GraphView,
             Tab::GraphView => Tab::HexDump,
             Tab::HexDump => Tab::Instructions,
@@ -136,10 +153,63 @@ impl App {
     pub fn previous_tab(&mut self) {
         self.current_tab = match self.current_tab {
             Tab::Instructions => Tab::HexDump,
-            Tab::ControlFlow => Tab::Instructions,
+            Tab::Functions => Tab::Instructions,
+            Tab::ControlFlow => Tab::Functions,
             Tab::GraphView => Tab::ControlFlow,
             Tab::HexDump => Tab::GraphView,
         };
+    }
+
+    pub fn next_function(&mut self) {
+        if self.functions.is_empty() {
+            return;
+        }
+
+        if let Some(current) = self.function_list_state.selected() {
+            let next = (current + 1).min(self.functions.len().saturating_sub(1));
+            self.function_list_state.select(Some(next));
+            self.selected_function = Some(next);
+        }
+    }
+
+    pub fn previous_function(&mut self) {
+        if self.functions.is_empty() {
+            return;
+        }
+
+        if let Some(current) = self.function_list_state.selected() {
+            let previous = current.saturating_sub(1);
+            self.function_list_state.select(Some(previous));
+            self.selected_function = Some(previous);
+        }
+    }
+
+    pub fn jump_to_selected_function(&mut self) {
+        let Some(function_idx) = self.selected_function else {
+            return;
+        };
+        let Some(function) = self.functions.get(function_idx) else {
+            return;
+        };
+        let Some(instruction_idx) = self.find_instruction_by_address(function.entry) else {
+            return;
+        };
+
+        self.selected_instruction = Some(instruction_idx);
+        if let Some(filtered_idx) = self
+            .filtered_instructions
+            .iter()
+            .position(|idx| *idx == instruction_idx)
+        {
+            self.instruction_list_state.select(Some(filtered_idx));
+        }
+        self.current_tab = Tab::Instructions;
+    }
+
+    fn find_instruction_by_address(&self, address: Address) -> Option<usize> {
+        self.instructions
+            .binary_search_by_key(&address.0, |instruction| instruction.address)
+            .ok()
     }
 
     pub fn toggle_help(&mut self) {
@@ -363,6 +433,8 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Result<(
                                         app.graph_view
                                             .move_selection(cfg, NavigationDirection::Down);
                                     }
+                                } else if app.current_tab == Tab::Functions {
+                                    app.next_function();
                                 } else {
                                     app.next_instruction();
                                 }
@@ -372,9 +444,14 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Result<(
                                     if let Some(ref cfg) = app.cfg {
                                         app.graph_view.move_selection(cfg, NavigationDirection::Up);
                                     }
+                                } else if app.current_tab == Tab::Functions {
+                                    app.previous_function();
                                 } else {
                                     app.previous_instruction();
                                 }
+                            }
+                            KeyCode::Enter if app.current_tab == Tab::Functions => {
+                                app.jump_to_selected_function();
                             }
                             KeyCode::Left => {
                                 if app.current_tab == Tab::GraphView {
@@ -395,9 +472,10 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Result<(
                             KeyCode::Tab => app.next_tab(),
                             KeyCode::BackTab => app.previous_tab(),
                             KeyCode::Char('1') => app.current_tab = Tab::Instructions,
-                            KeyCode::Char('2') => app.current_tab = Tab::ControlFlow,
-                            KeyCode::Char('3') => app.current_tab = Tab::GraphView,
-                            KeyCode::Char('4') => app.current_tab = Tab::HexDump,
+                            KeyCode::Char('2') => app.current_tab = Tab::Functions,
+                            KeyCode::Char('3') => app.current_tab = Tab::ControlFlow,
+                            KeyCode::Char('4') => app.current_tab = Tab::GraphView,
+                            KeyCode::Char('5') => app.current_tab = Tab::HexDump,
                             KeyCode::PageDown => {
                                 if app.current_tab == Tab::GraphView {
                                     app.graph_view.zoom_out();
@@ -474,17 +552,24 @@ fn ui(f: &mut Frame, app: &mut App) {
         .split(f.area());
 
     // Render tabs with proper ratatui styling
-    let tab_titles: Vec<Line> = ["Instructions", "Control Flow", "Graph View", "Hex Dump"]
-        .iter()
-        .cloned()
-        .map(Line::from)
-        .collect();
+    let tab_titles: Vec<Line> = [
+        "Instructions",
+        "Functions",
+        "Control Flow",
+        "Graph View",
+        "Hex Dump",
+    ]
+    .iter()
+    .cloned()
+    .map(Line::from)
+    .collect();
 
     let selected_tab = match app.current_tab {
         Tab::Instructions => 0,
-        Tab::ControlFlow => 1,
-        Tab::GraphView => 2,
-        Tab::HexDump => 3,
+        Tab::Functions => 1,
+        Tab::ControlFlow => 2,
+        Tab::GraphView => 3,
+        Tab::HexDump => 4,
     };
 
     let tabs = Tabs::new(tab_titles)
@@ -507,6 +592,7 @@ fn ui(f: &mut Frame, app: &mut App) {
     // Render main content based on selected tab
     match app.current_tab {
         Tab::Instructions => render_instructions(f, app, chunks[1]),
+        Tab::Functions => render_functions(f, app, chunks[1]),
         Tab::ControlFlow => render_control_flow(f, app, chunks[1]),
         Tab::GraphView => render_graph_view(f, app, chunks[1]),
         Tab::HexDump => render_hex_dump(f, app, chunks[1]),
@@ -649,6 +735,151 @@ fn render_instruction_details(f: &mut Frame, app: &App, area: Rect) {
 
     let paragraph = Paragraph::new(content)
         .block(Block::default().borders(Borders::ALL).title("Details"))
+        .wrap(Wrap { trim: true });
+
+    f.render_widget(paragraph, area);
+}
+
+fn render_functions(f: &mut Frame, app: &mut App, area: Rect) {
+    if app.functions.is_empty() {
+        let paragraph =
+            Paragraph::new("No functions inferred\n\nOpen a binary with --tui to build CFG-backed function summaries")
+                .block(Block::default().borders(Borders::ALL).title("Functions"))
+                .wrap(Wrap { trim: true });
+        f.render_widget(paragraph, area);
+        return;
+    }
+
+    let chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(62), Constraint::Percentage(38)])
+        .split(area);
+
+    let function_items: Vec<ListItem> = app
+        .functions
+        .iter()
+        .enumerate()
+        .map(|(idx, function)| {
+            let is_selected = app.selected_function == Some(idx);
+            let style = if is_selected {
+                Style::default()
+                    .bg(Color::DarkGray)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default()
+            };
+
+            ListItem::new(vec![
+                Line::from(vec![
+                    Span::styled(
+                        format!("{:#014x}", function.entry.0),
+                        Style::default().fg(Color::Cyan),
+                    ),
+                    Span::styled(
+                        format!("  callers: {}", function.caller_count),
+                        Style::default().fg(Color::Yellow),
+                    ),
+                ]),
+                Line::from(Span::styled(
+                    format!(
+                        "  blocks: {}  instructions: {}  edges: {}",
+                        function.block_count, function.instruction_count, function.edge_count
+                    ),
+                    style,
+                )),
+            ])
+        })
+        .collect();
+
+    let functions_list = List::new(function_items)
+        .block(Block::default().borders(Borders::ALL).title("Functions"))
+        .highlight_style(
+            Style::default()
+                .add_modifier(Modifier::BOLD)
+                .bg(Color::Blue),
+        )
+        .highlight_symbol("> ");
+
+    f.render_stateful_widget(functions_list, chunks[0], &mut app.function_list_state);
+
+    render_function_details(f, app, chunks[1]);
+}
+
+fn render_function_details(f: &mut Frame, app: &App, area: Rect) {
+    let Some(function_idx) = app.selected_function else {
+        let paragraph = Paragraph::new("No function selected").block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title("Function Details"),
+        );
+        f.render_widget(paragraph, area);
+        return;
+    };
+
+    let Some(function) = app.functions.get(function_idx) else {
+        return;
+    };
+
+    let mut lines = vec![
+        Line::from(vec![
+            Span::styled("Entry: ", Style::default().fg(Color::Cyan)),
+            Span::raw(format!("{:#014x}", function.entry.0)),
+        ]),
+        Line::from(vec![
+            Span::styled("Blocks: ", Style::default().fg(Color::Cyan)),
+            Span::raw(function.block_count.to_string()),
+        ]),
+        Line::from(vec![
+            Span::styled("Instructions: ", Style::default().fg(Color::Cyan)),
+            Span::raw(function.instruction_count.to_string()),
+        ]),
+        Line::from(vec![
+            Span::styled("Internal Edges: ", Style::default().fg(Color::Cyan)),
+            Span::raw(function.edge_count.to_string()),
+        ]),
+        Line::from(vec![
+            Span::styled("Callers: ", Style::default().fg(Color::Cyan)),
+            Span::raw(function.caller_count.to_string()),
+        ]),
+        Line::from(""),
+        Line::from(vec![Span::styled(
+            "Press Enter to jump to entry",
+            Style::default().fg(Color::Green),
+        )]),
+    ];
+
+    if let Some(cfg) = &app.cfg {
+        let callers: Vec<_> = cfg
+            .edges
+            .iter()
+            .filter(|edge| {
+                edge.edge_type == crate::graph::EdgeType::Call && edge.to == function.entry
+            })
+            .map(|edge| edge.from)
+            .take(8)
+            .collect();
+
+        if !callers.is_empty() {
+            lines.push(Line::from(""));
+            lines.push(Line::from(vec![Span::styled(
+                "Call Sites:",
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            )]));
+
+            for caller in callers {
+                lines.push(Line::from(format!("  {}", caller)));
+            }
+        }
+    }
+
+    let paragraph = Paragraph::new(lines)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title("Function Details"),
+        )
         .wrap(Wrap { trim: true });
 
     f.render_widget(paragraph, area);
@@ -860,8 +1091,9 @@ fn render_status_bar(f: &mut Frame, app: &App, area: Rect) {
         )
     } else {
         format!(
-            "Instructions: {} | Selected: {} | Tab: {:?} | Press '/' to search, 'h' for help, 'q' to quit",
+            "Instructions: {} | Functions: {} | Selected: {} | Tab: {:?} | '/' search, Enter jumps from Functions, h help, q quit",
             app.instructions.len(),
+            app.functions.len(),
             app.selected_instruction
                 .map_or("None".to_string(), |i| (i + 1).to_string()),
             app.current_tab
@@ -911,8 +1143,12 @@ fn render_help(f: &mut Frame) {
             Span::raw("- Previous tab"),
         ]),
         Line::from(vec![
-            Span::styled("  1/2/3/4    ", Style::default().fg(Color::Green)),
+            Span::styled("  1-5        ", Style::default().fg(Color::Green)),
             Span::raw("- Select specific tab"),
+        ]),
+        Line::from(vec![
+            Span::styled("  Enter      ", Style::default().fg(Color::Green)),
+            Span::raw("- Jump to selected function entry"),
         ]),
         Line::from(""),
         Line::from(vec![Span::styled(
@@ -927,14 +1163,18 @@ fn render_help(f: &mut Frame) {
         ]),
         Line::from(vec![
             Span::styled("  2 ", Style::default().fg(Color::Yellow)),
-            Span::raw("- Control Flow"),
+            Span::raw("- Functions"),
         ]),
         Line::from(vec![
             Span::styled("  3 ", Style::default().fg(Color::Yellow)),
-            Span::raw("- Graph Analysis"),
+            Span::raw("- Control Flow"),
         ]),
         Line::from(vec![
             Span::styled("  4 ", Style::default().fg(Color::Yellow)),
+            Span::raw("- Graph Analysis"),
+        ]),
+        Line::from(vec![
+            Span::styled("  5 ", Style::default().fg(Color::Yellow)),
             Span::raw("- Hex Dump"),
         ]),
         Line::from(""),
@@ -1026,5 +1266,71 @@ fn render_graph_view(f: &mut Frame, app: &mut App, area: Rect) {
                 .block(Block::default().borders(Borders::ALL).title("Graph View"))
                 .wrap(Wrap { trim: true });
         f.render_widget(paragraph, area);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::graph::{Address, Instruction as CfgInstruction};
+
+    fn instruction(address: u64, text: &str, size: usize) -> Instruction {
+        Instruction {
+            address,
+            bytes: vec![0x90; size],
+            text: text.to_string(),
+        }
+    }
+
+    fn cfg_instruction(
+        address: u64,
+        mnemonic: &str,
+        operands: &str,
+        size: usize,
+    ) -> CfgInstruction {
+        CfgInstruction {
+            address: Address(address),
+            mnemonic: mnemonic.to_string(),
+            operands: operands.to_string(),
+            bytes: vec![0x90; size],
+        }
+    }
+
+    #[test]
+    fn function_jump_selects_entry_instruction() {
+        let mut cfg = ControlFlowGraph::new();
+        cfg.build_from_instructions(vec![
+            cfg_instruction(0x1000, "call", "0000000000002000h", 5),
+            cfg_instruction(0x1005, "ret", "", 1),
+            cfg_instruction(0x2000, "push", "rbp", 1),
+            cfg_instruction(0x2001, "mov", "rbp,rsp", 3),
+            cfg_instruction(0x2004, "ret", "", 1),
+        ]);
+
+        let mut app = App::new(
+            vec![
+                instruction(0x1000, "call 0000000000002000h", 5),
+                instruction(0x1005, "ret", 1),
+                instruction(0x2000, "push rbp", 1),
+                instruction(0x2001, "mov rbp,rsp", 3),
+                instruction(0x2004, "ret", 1),
+            ],
+            Some(cfg),
+        );
+
+        let callee_idx = app
+            .functions
+            .iter()
+            .position(|function| function.entry == Address(0x2000))
+            .unwrap();
+
+        app.current_tab = Tab::Functions;
+        app.selected_function = Some(callee_idx);
+        app.function_list_state.select(Some(callee_idx));
+        app.jump_to_selected_function();
+
+        assert_eq!(app.current_tab, Tab::Instructions);
+        assert_eq!(app.selected_instruction, Some(2));
+        assert_eq!(app.instruction_list_state.selected(), Some(2));
     }
 }

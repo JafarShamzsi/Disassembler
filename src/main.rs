@@ -353,9 +353,27 @@ fn display_metrics(cfg: &ControlFlowGraph) {
 
 fn display_functions(cfg: &ControlFlowGraph) {
     println!("\n[FUNCTIONS] Function Analysis:");
-    println!("  Function analysis not yet implemented");
-    println!("  Available basic blocks: {}", cfg.blocks.len());
-    println!("  Available edges: {}", cfg.edges.len());
+    let functions = cfg.function_summaries();
+
+    if functions.is_empty() {
+        println!("  No function entries inferred");
+        return;
+    }
+
+    println!("+----------------+--------+--------------+-------+---------+");
+    println!("| Entry          | Blocks | Instructions | Edges | Callers |");
+    println!("+----------------+--------+--------------+-------+---------+");
+    for function in functions {
+        println!(
+            "| {:#014x} | {:>6} | {:>12} | {:>5} | {:>7} |",
+            function.entry.0,
+            function.block_count,
+            function.instruction_count,
+            function.edge_count,
+            function.caller_count
+        );
+    }
+    println!("+----------------+--------+--------------+-------+---------+");
 }
 
 fn display_loops(cfg: &ControlFlowGraph) {
