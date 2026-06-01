@@ -65,8 +65,9 @@ cargo build --release
 ./target/release/disassembler binary.exe --functions --save-project analysis.disproj.json
 ./target/release/disassembler binary.exe --project analysis.disproj.json --names
 
-# Export analysis
+# Export analysis, including project names/comments when --project is provided
 ./target/release/disassembler binary.exe --cfg --output analysis.json --format json
+./target/release/disassembler binary.exe --project analysis.disproj.json --output analysis.csv --format csv
 ```
 
 #### Interactive TUI

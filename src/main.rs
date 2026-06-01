@@ -2,7 +2,10 @@ use clap::{Arg, Command};
 use disassembler::arch::arm::ARMDisassembler;
 use disassembler::arch::x86::{disasm, DisasmOpts};
 use disassembler::arch::{ArchConfig, ArchDisassembler, Architecture};
-use disassembler::export::{export_auto_format_with_metadata_and_analysis, ExportFormat, Exporter};
+use disassembler::export::{
+    export_auto_format_with_metadata_analysis_and_annotations, ExportAnnotations, ExportFormat,
+    Exporter,
+};
 use disassembler::graph::{Address, ControlFlowGraph, Instruction as CfgInstruction};
 use disassembler::parser::{self, AnalyzedBinary, BinaryAnalysis, BinaryMetadata};
 use disassembler::project::{AnalysisProject, ProjectFunction};
@@ -265,32 +268,36 @@ fn main() -> io::Result<()> {
         // Handle export
         if let Some(output_path) = &opts.output {
             println!("\n[EXPORT] Exporting analysis...");
+            let export_annotations = loaded_project.as_ref().map(ExportAnnotations::from_project);
             let export_result = if let Some(format_str) = &opts.format {
                 let format = parse_export_format(format_str);
                 match &cfg {
-                    Some(cfg) => Exporter::export_with_cfg_metadata_and_analysis(
+                    Some(cfg) => Exporter::export_with_cfg_metadata_analysis_and_annotations(
                         &instructions,
                         cfg,
                         format,
                         output_path.to_str().unwrap(),
                         Some(&metadata),
                         Some(&analysis),
+                        export_annotations.as_ref(),
                     ),
-                    None => Exporter::export_instructions_with_metadata_and_analysis(
+                    None => Exporter::export_instructions_with_metadata_analysis_and_annotations(
                         &instructions,
                         format,
                         output_path.to_str().unwrap(),
                         Some(&metadata),
                         Some(&analysis),
+                        export_annotations.as_ref(),
                     ),
                 }
             } else {
-                export_auto_format_with_metadata_and_analysis(
+                export_auto_format_with_metadata_analysis_and_annotations(
                     &instructions,
                     cfg.as_ref(),
                     output_path.to_str().unwrap(),
                     Some(&metadata),
                     Some(&analysis),
+                    export_annotations.as_ref(),
                 )
             };
 

@@ -1,8 +1,10 @@
 use crate::arch;
 use crate::graph::ControlFlowGraph;
 use crate::parser::{BinaryAnalysis, BinaryMetadata};
+use crate::project::AnalysisProject;
 use arch::x86::Instruction;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fs::File;
 use std::io::Write;
 use std::path::Path;
@@ -52,6 +54,10 @@ pub struct ExportableInstruction {
     pub operands: String,
     pub full_text: String,
     pub size: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub user_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub comment: Option<String>,
 }
 
 impl From<&Instruction> for ExportableInstruction {
@@ -78,6 +84,31 @@ impl From<&Instruction> for ExportableInstruction {
             operands,
             full_text: inst.text.clone(),
             size: inst.bytes.len(),
+            user_name: None,
+            comment: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct ExportAnnotations {
+    pub names: HashMap<u64, String>,
+    pub comments: HashMap<u64, String>,
+}
+
+impl ExportAnnotations {
+    pub fn from_project(project: &AnalysisProject) -> Self {
+        Self {
+            names: project
+                .user_names
+                .iter()
+                .map(|name| (name.address, name.name.clone()))
+                .collect(),
+            comments: project
+                .comments
+                .iter()
+                .map(|comment| (comment.address, comment.text.clone()))
+                .collect(),
         }
     }
 }
@@ -144,9 +175,25 @@ impl Exporter {
         binary_metadata: Option<&BinaryMetadata>,
         binary_analysis: Option<&BinaryAnalysis>,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let exportable: Vec<ExportableInstruction> =
-            instructions.iter().map(|i| i.into()).collect();
+        Self::export_instructions_with_metadata_analysis_and_annotations(
+            instructions,
+            format,
+            path,
+            binary_metadata,
+            binary_analysis,
+            None,
+        )
+    }
 
+    pub fn export_instructions_with_metadata_analysis_and_annotations(
+        instructions: &[Instruction],
+        format: ExportFormat,
+        path: &str,
+        binary_metadata: Option<&BinaryMetadata>,
+        binary_analysis: Option<&BinaryAnalysis>,
+        annotations: Option<&ExportAnnotations>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let exportable = exportable_instructions(instructions, annotations);
         let metadata = Self::create_metadata_with_analysis(
             &exportable,
             None,
@@ -205,9 +252,27 @@ impl Exporter {
         binary_metadata: Option<&BinaryMetadata>,
         binary_analysis: Option<&BinaryAnalysis>,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let exportable: Vec<ExportableInstruction> =
-            instructions.iter().map(|i| i.into()).collect();
+        Self::export_with_cfg_metadata_analysis_and_annotations(
+            instructions,
+            cfg,
+            format,
+            path,
+            binary_metadata,
+            binary_analysis,
+            None,
+        )
+    }
 
+    pub fn export_with_cfg_metadata_analysis_and_annotations(
+        instructions: &[Instruction],
+        cfg: &ControlFlowGraph,
+        format: ExportFormat,
+        path: &str,
+        binary_metadata: Option<&BinaryMetadata>,
+        binary_analysis: Option<&BinaryAnalysis>,
+        annotations: Option<&ExportAnnotations>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let exportable = exportable_instructions(instructions, annotations);
         let cfg_info = Some(CfgExportData {
             block_count: cfg.blocks.len(),
             edge_count: cfg.edges.len(),
@@ -230,12 +295,13 @@ impl Exporter {
             ExportFormat::Json => Self::export_json(&export_data, path),
             ExportFormat::Html => Self::export_html_with_cfg(&export_data, cfg, path),
             ExportFormat::Dot => Self::export_dot(cfg, path),
-            _ => Self::export_instructions_with_metadata_and_analysis(
+            _ => Self::export_instructions_with_metadata_analysis_and_annotations(
                 instructions,
                 format,
                 path,
                 binary_metadata,
                 binary_analysis,
+                annotations,
             ),
         }
     }
@@ -297,13 +363,19 @@ impl Exporter {
     ) -> Result<(), Box<dyn std::error::Error>> {
         let mut file = File::create(path)?;
 
-        writeln!(file, "Address,Bytes,Mnemonic,Operands,Size")?;
+        writeln!(file, "Address,Bytes,Mnemonic,Operands,Size,Name,Comment")?;
 
         for inst in instructions {
             writeln!(
                 file,
-                "{},{},{},{},{}",
-                inst.address, inst.bytes_hex, inst.mnemonic, inst.operands, inst.size
+                "{},{},{},{},{},{},{}",
+                csv_field(&inst.address),
+                csv_field(&inst.bytes_hex),
+                csv_field(&inst.mnemonic),
+                csv_field(&inst.operands),
+                inst.size,
+                csv_field(inst.user_name.as_deref().unwrap_or_default()),
+                csv_field(inst.comment.as_deref().unwrap_or_default())
             )?;
         }
 
@@ -392,14 +464,18 @@ impl Exporter {
 
         writeln!(file, "## Instructions")?;
         writeln!(file)?;
-        writeln!(file, "| Address | Bytes | Instruction |")?;
-        writeln!(file, "|---------|-------|-------------|")?;
+        writeln!(file, "| Address | Name | Bytes | Instruction | Comment |")?;
+        writeln!(file, "|---------|------|-------|-------------|---------|")?;
 
         for inst in &data.instructions {
             writeln!(
                 file,
-                "| {} | `{}` | `{}` |",
-                inst.address, inst.bytes_hex, inst.full_text
+                "| {} | {} | `{}` | `{}` | {} |",
+                inst.address,
+                inst.user_name.as_deref().unwrap_or_default(),
+                inst.bytes_hex,
+                inst.full_text,
+                inst.comment.as_deref().unwrap_or_default()
             )?;
         }
 
@@ -422,7 +498,15 @@ impl Exporter {
         writeln!(file)?;
 
         for inst in instructions {
-            writeln!(file, "{}: {}", inst.address, inst.full_text)?;
+            if let Some(name) = &inst.user_name {
+                writeln!(file, "{}:", name)?;
+            }
+            let comment = inst
+                .comment
+                .as_deref()
+                .map(|comment| format!(" ; {comment}"))
+                .unwrap_or_default();
+            writeln!(file, "{}: {}{}", inst.address, inst.full_text, comment)?;
         }
 
         println!(
@@ -604,6 +688,8 @@ impl Exporter {
                 <th>Bytes</th>
                 <th>Mnemonic</th>
                 <th>Operands</th>
+                <th>Name</th>
+                <th>Comment</th>
             </tr>
         </thead>
         <tbody>
@@ -617,9 +703,16 @@ impl Exporter {
                 <td class="bytes">{}</td>
                 <td class="mnemonic">{}</td>
                 <td class="operands">{}</td>
+                <td>{}</td>
+                <td>{}</td>
             </tr>
 "#,
-                inst.address, inst.bytes_hex, inst.mnemonic, inst.operands
+                inst.address,
+                inst.bytes_hex,
+                inst.mnemonic,
+                inst.operands,
+                inst.user_name.as_deref().unwrap_or_default(),
+                inst.comment.as_deref().unwrap_or_default()
             ));
         }
 
@@ -656,6 +749,24 @@ pub fn export_auto_format_with_metadata_and_analysis(
     binary_metadata: Option<&BinaryMetadata>,
     binary_analysis: Option<&BinaryAnalysis>,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    export_auto_format_with_metadata_analysis_and_annotations(
+        instructions,
+        cfg,
+        path,
+        binary_metadata,
+        binary_analysis,
+        None,
+    )
+}
+
+pub fn export_auto_format_with_metadata_analysis_and_annotations(
+    instructions: &[Instruction],
+    cfg: Option<&ControlFlowGraph>,
+    path: &str,
+    binary_metadata: Option<&BinaryMetadata>,
+    binary_analysis: Option<&BinaryAnalysis>,
+    annotations: Option<&ExportAnnotations>,
+) -> Result<(), Box<dyn std::error::Error>> {
     let path_obj = Path::new(path);
     let extension = path_obj
         .extension()
@@ -666,20 +777,139 @@ pub fn export_auto_format_with_metadata_and_analysis(
         .ok_or(format!("Unsupported export format: {}", extension))?;
 
     match cfg {
-        Some(cfg) => Exporter::export_with_cfg_metadata_and_analysis(
+        Some(cfg) => Exporter::export_with_cfg_metadata_analysis_and_annotations(
             instructions,
             cfg,
             format,
             path,
             binary_metadata,
             binary_analysis,
+            annotations,
         ),
-        None => Exporter::export_instructions_with_metadata_and_analysis(
+        None => Exporter::export_instructions_with_metadata_analysis_and_annotations(
             instructions,
             format,
             path,
             binary_metadata,
             binary_analysis,
+            annotations,
         ),
+    }
+}
+
+fn exportable_instructions(
+    instructions: &[Instruction],
+    annotations: Option<&ExportAnnotations>,
+) -> Vec<ExportableInstruction> {
+    instructions
+        .iter()
+        .map(|instruction| {
+            let mut exportable = ExportableInstruction::from(instruction);
+            if let Some(annotations) = annotations {
+                exportable.user_name = annotations.names.get(&instruction.address).cloned();
+                exportable.comment = annotations.comments.get(&instruction.address).cloned();
+            }
+            exportable
+        })
+        .collect()
+}
+
+fn csv_field(value: &str) -> String {
+    if value.contains(',') || value.contains('"') || value.contains('\n') {
+        format!("\"{}\"", value.replace('"', "\"\""))
+    } else {
+        value.to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::project::AnalysisProject;
+
+    fn instruction(address: u64, text: &str) -> Instruction {
+        Instruction {
+            address,
+            bytes: vec![0x90],
+            text: text.to_string(),
+        }
+    }
+
+    #[test]
+    fn export_annotations_are_built_from_project() {
+        let mut project = AnalysisProject::from_binary("sample.exe", b"binary");
+        project.set_user_name(0x1000, "entry");
+        project.set_comment(0x1000, "starts here");
+
+        let annotations = ExportAnnotations::from_project(&project);
+
+        assert_eq!(
+            annotations.names.get(&0x1000).map(String::as_str),
+            Some("entry")
+        );
+        assert_eq!(
+            annotations.comments.get(&0x1000).map(String::as_str),
+            Some("starts here")
+        );
+    }
+
+    #[test]
+    fn json_export_includes_instruction_annotations() {
+        let path = std::env::temp_dir().join(format!(
+            "disassembler-export-annotations-{}.json",
+            std::process::id()
+        ));
+        let mut annotations = ExportAnnotations::default();
+        annotations.names.insert(0x1000, "entry".to_string());
+        annotations
+            .comments
+            .insert(0x1000, "first instruction".to_string());
+
+        Exporter::export_instructions_with_metadata_analysis_and_annotations(
+            &[instruction(0x1000, "nop")],
+            ExportFormat::Json,
+            path.to_str().unwrap(),
+            None,
+            None,
+            Some(&annotations),
+        )
+        .unwrap();
+
+        let json = std::fs::read_to_string(&path).unwrap();
+        let _ = std::fs::remove_file(&path);
+        let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(value["instructions"][0]["user_name"], "entry");
+        assert_eq!(value["instructions"][0]["comment"], "first instruction");
+    }
+
+    #[test]
+    fn csv_export_includes_instruction_annotations() {
+        let path = std::env::temp_dir().join(format!(
+            "disassembler-export-annotations-{}.csv",
+            std::process::id()
+        ));
+        let mut annotations = ExportAnnotations::default();
+        annotations.names.insert(0x1000, "entry".to_string());
+        annotations
+            .comments
+            .insert(0x1000, "call, quoted".to_string());
+
+        Exporter::export_instructions_with_metadata_analysis_and_annotations(
+            &[instruction(0x1000, "nop")],
+            ExportFormat::Csv,
+            path.to_str().unwrap(),
+            None,
+            None,
+            Some(&annotations),
+        )
+        .unwrap();
+
+        let csv = std::fs::read_to_string(&path).unwrap();
+        let _ = std::fs::remove_file(&path);
+
+        assert!(csv.contains("Address,Bytes,Mnemonic,Operands,Size,Name,Comment"));
+        assert!(csv.contains("entry"));
+        assert!(csv.contains("\"call, quoted\""));
     }
 }
