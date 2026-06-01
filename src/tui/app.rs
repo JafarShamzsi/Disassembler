@@ -4,7 +4,7 @@ use std::io;
 use std::path::PathBuf;
 
 use crate::arch::x86::Instruction;
-use crate::graph::{Address, ControlFlowGraph, EdgeType, FunctionSummary};
+use crate::graph::{Address, ControlFlowGraph, EdgeType, FunctionSummary, ReferenceKind};
 use crate::graph_renderer::GraphRenderer;
 use crate::graph_view::GraphView;
 use crate::parser::{BinaryAnalysis, ImportSummary, StringSummary, SymbolKind, SymbolSummary};
@@ -33,6 +33,15 @@ pub struct XrefItem {
     pub from: Address,
     pub to: Address,
     pub edge_type: EdgeType,
+    pub reference_kind: XrefKind,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum XrefKind {
+    ControlFlow,
+    CallReference,
+    JumpReference,
+    DataReference,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -78,12 +87,17 @@ pub struct EditPrompt {
 
 impl XrefItem {
     pub(crate) fn kind(&self) -> &'static str {
-        match self.edge_type {
-            EdgeType::Call => "call",
-            EdgeType::ConditionalTrue => "true",
-            EdgeType::ConditionalFalse => "false",
-            EdgeType::Unconditional => "jump",
-            EdgeType::Return => "return",
+        match self.reference_kind {
+            XrefKind::CallReference => "call-ref",
+            XrefKind::JumpReference => "jump-ref",
+            XrefKind::DataReference => "data",
+            XrefKind::ControlFlow => match self.edge_type {
+                EdgeType::Call => "call",
+                EdgeType::ConditionalTrue => "true",
+                EdgeType::ConditionalFalse => "false",
+                EdgeType::Unconditional => "jump",
+                EdgeType::Return => "return",
+            },
         }
     }
 }
@@ -1085,8 +1099,32 @@ fn build_xref_items(cfg: &ControlFlowGraph) -> Vec<XrefItem> {
             from: edge.from,
             to: edge.to,
             edge_type: edge.edge_type.clone(),
+            reference_kind: XrefKind::ControlFlow,
         })
         .collect();
+
+    xrefs.extend(cfg.references.iter().filter_map(|reference| {
+        let duplicate_control_edge = cfg
+            .edges
+            .iter()
+            .any(|edge| edge.from == reference.from && edge.to == reference.to);
+        if duplicate_control_edge {
+            return None;
+        }
+
+        let (edge_type, reference_kind) = match reference.kind {
+            ReferenceKind::Call => (EdgeType::Call, XrefKind::CallReference),
+            ReferenceKind::Jump => (EdgeType::Unconditional, XrefKind::JumpReference),
+            ReferenceKind::Data => (EdgeType::Unconditional, XrefKind::DataReference),
+        };
+
+        Some(XrefItem {
+            from: reference.from,
+            to: reference.to,
+            edge_type,
+            reference_kind,
+        })
+    }));
 
     xrefs.sort_by_key(|xref| (xref.to, xref.from));
     xrefs

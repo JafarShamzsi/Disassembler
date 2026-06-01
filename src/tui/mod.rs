@@ -343,6 +343,32 @@ mod tests {
     }
 
     #[test]
+    fn xrefs_include_external_call_references() {
+        let mut cfg = ControlFlowGraph::new();
+        cfg.build_from_instructions(vec![
+            cfg_instruction(0x1000, "call", "0x5000", 5),
+            cfg_instruction(0x1005, "ret", "", 1),
+        ]);
+
+        let app = App::new(
+            vec![
+                instruction(0x1000, "call 0x5000", 5),
+                instruction(0x1005, "ret", 1),
+            ],
+            Some(cfg),
+            BinaryAnalysis::default(),
+        );
+
+        let xref = app
+            .xrefs
+            .iter()
+            .find(|xref| xref.from == Address(0x1000) && xref.to == Address(0x5000))
+            .unwrap();
+
+        assert_eq!(xref.kind(), "call-ref");
+    }
+
+    #[test]
     fn function_list_includes_function_symbols() {
         let mut cfg = ControlFlowGraph::new();
         cfg.build_from_instructions(vec![

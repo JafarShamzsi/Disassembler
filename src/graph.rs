@@ -50,6 +50,20 @@ pub struct Edge {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ReferenceKind {
+    Call,
+    Jump,
+    Data,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Reference {
+    pub from: Address,
+    pub to: Address,
+    pub kind: ReferenceKind,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FunctionSummary {
     pub entry: Address,
     pub block_count: usize,
@@ -61,6 +75,7 @@ pub struct FunctionSummary {
 pub struct ControlFlowGraph {
     pub blocks: HashMap<Address, BasicBlock>,
     pub edges: Vec<Edge>,
+    pub references: Vec<Reference>,
     graph: Graph<Address, EdgeType, Directed>,
     addr_to_node: HashMap<Address, NodeIndex>,
 }
@@ -70,6 +85,7 @@ impl std::fmt::Debug for ControlFlowGraph {
         f.debug_struct("ControlFlowGraph")
             .field("blocks", &self.blocks.len())
             .field("edges", &self.edges.len())
+            .field("references", &self.references.len())
             .finish()
     }
 }
@@ -79,6 +95,7 @@ impl ControlFlowGraph {
         Self {
             blocks: HashMap::new(),
             edges: Vec::new(),
+            references: Vec::new(),
             graph: Graph::new(),
             addr_to_node: HashMap::new(),
         }
@@ -86,6 +103,12 @@ impl ControlFlowGraph {
 
     /// Build CFG from a list of instructions
     pub fn build_from_instructions(&mut self, instructions: Vec<Instruction>) {
+        self.blocks.clear();
+        self.edges.clear();
+        self.references.clear();
+        self.graph = Graph::new();
+        self.addr_to_node.clear();
+
         if instructions.is_empty() {
             return;
         }
@@ -102,6 +125,7 @@ impl ControlFlowGraph {
 
         // Step 3: Analyze control flow and create edges
         self.analyze_control_flow(&instructions);
+        self.scan_data_references(&instructions);
 
         // eprintln!("DEBUG: Created {} edges", self.edges.len());
     }
@@ -267,6 +291,20 @@ impl ControlFlowGraph {
         None
     }
 
+    fn parse_operand_addresses(&self, operands: &str) -> Vec<u64> {
+        operands
+            .split_whitespace()
+            .filter_map(|part| {
+                let part = part.trim_matches(|ch: char| {
+                    matches!(ch, '[' | ']' | '(' | ')' | ',' | ':' | '+' | '-')
+                });
+                part.strip_prefix("0x")
+                    .and_then(|addr| u64::from_str_radix(addr, 16).ok())
+                    .or_else(|| parse_nasm_hex(part))
+            })
+            .collect()
+    }
+
     /// Create basic blocks from instructions and leaders
     fn create_basic_blocks(&mut self, instructions: &[Instruction], leaders: &HashSet<Address>) {
         let mut current_block = Vec::new();
@@ -335,6 +373,7 @@ impl ControlFlowGraph {
 
         // Collect edges first to avoid borrowing issues
         let mut edges_to_add = Vec::new();
+        let mut references_to_add = Vec::new();
 
         // Analyze each block's last instruction to determine successors
         for (&block_addr, block) in &self.blocks {
@@ -348,6 +387,7 @@ impl ControlFlowGraph {
                             self.parse_jump_target(&last_instr.operands, last_instr.address.0)
                         {
                             let target_addr = Address(target);
+                            references_to_add.push((block_addr, target_addr, ReferenceKind::Jump));
                             if self.blocks.contains_key(&target_addr) {
                                 edges_to_add.push((
                                     block_addr,
@@ -368,6 +408,7 @@ impl ControlFlowGraph {
                             self.parse_jump_target(&last_instr.operands, last_instr.address.0)
                         {
                             let target_addr = Address(target);
+                            references_to_add.push((block_addr, target_addr, ReferenceKind::Jump));
                             if self.blocks.contains_key(&target_addr) {
                                 edges_to_add.push((
                                     block_addr,
@@ -397,6 +438,7 @@ impl ControlFlowGraph {
                             self.parse_jump_target(&last_instr.operands, last_instr.address.0)
                         {
                             let target_addr = Address(target);
+                            references_to_add.push((block_addr, target_addr, ReferenceKind::Call));
                             if self.blocks.contains_key(&target_addr) {
                                 edges_to_add.push((block_addr, target_addr, EdgeType::Call));
                             }
@@ -432,9 +474,56 @@ impl ControlFlowGraph {
         }
 
         // Now add all the edges
+        for (from, to, kind) in references_to_add {
+            self.add_reference(from, to, kind);
+        }
+
         for (from, to, edge_type) in edges_to_add {
             self.add_edge(from, to, edge_type);
         }
+    }
+
+    fn scan_data_references(&mut self, instructions: &[Instruction]) {
+        let known_addresses: HashSet<Address> = instructions
+            .iter()
+            .map(|instruction| instruction.address)
+            .collect();
+
+        for instruction in instructions {
+            if self.is_control_flow_instruction(&instruction.mnemonic) {
+                continue;
+            }
+
+            for target in self.parse_operand_addresses(&instruction.operands) {
+                let target = Address(target);
+                if known_addresses.contains(&target) {
+                    self.add_reference(instruction.address, target, ReferenceKind::Data);
+                }
+            }
+        }
+    }
+
+    fn add_reference(&mut self, from: Address, to: Address, kind: ReferenceKind) {
+        if self
+            .references
+            .iter()
+            .any(|reference| reference.from == from && reference.to == to && reference.kind == kind)
+        {
+            return;
+        }
+
+        self.references.push(Reference { from, to, kind });
+        self.references.sort_by_key(|reference| {
+            (
+                reference.to,
+                reference.from,
+                match reference.kind {
+                    ReferenceKind::Call => 0,
+                    ReferenceKind::Jump => 1,
+                    ReferenceKind::Data => 2,
+                },
+            )
+        });
     }
 
     /// Add an edge between two blocks
@@ -765,5 +854,37 @@ mod tests {
         assert!(!summaries
             .iter()
             .any(|summary| summary.entry == Address(0x3000)));
+    }
+
+    #[test]
+    fn records_external_call_references_without_cfg_edges() {
+        let mut cfg = ControlFlowGraph::new();
+        cfg.build_from_instructions(vec![
+            instr(0x1000, "call", "0x5000", 5),
+            instr(0x1005, "ret", "", 1),
+        ]);
+
+        assert!(cfg.edges.iter().all(|edge| edge.to != Address(0x5000)));
+        assert!(cfg.references.iter().any(|reference| {
+            reference.from == Address(0x1000)
+                && reference.to == Address(0x5000)
+                && reference.kind == ReferenceKind::Call
+        }));
+    }
+
+    #[test]
+    fn records_data_references_to_known_instruction_addresses() {
+        let mut cfg = ControlFlowGraph::new();
+        cfg.build_from_instructions(vec![
+            instr(0x1000, "mov", "rax, [0x2000]", 7),
+            instr(0x1007, "ret", "", 1),
+            instr(0x2000, "nop", "", 1),
+        ]);
+
+        assert!(cfg.references.iter().any(|reference| {
+            reference.from == Address(0x1000)
+                && reference.to == Address(0x2000)
+                && reference.kind == ReferenceKind::Data
+        }));
     }
 }

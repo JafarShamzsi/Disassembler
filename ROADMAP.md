@@ -101,7 +101,7 @@ Acceptance criteria:
 
 ## Phase 4: Better Function And Xref Recovery
 
-Status: in progress. Function recovery now seeds entries from symbols and recognizes x86/x64 frame-pointer prologues.
+Status: in progress. Function recovery now seeds entries from symbols and recognizes x86/x64 frame-pointer prologues. Xrefs include external call references and direct data-address operands separately from CFG traversal.
 
 Purpose: improve analysis quality enough for real binaries.
 
