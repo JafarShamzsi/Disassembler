@@ -343,6 +343,41 @@ mod tests {
     }
 
     #[test]
+    fn function_list_includes_function_symbols() {
+        let mut cfg = ControlFlowGraph::new();
+        cfg.build_from_instructions(vec![
+            cfg_instruction(0x1000, "nop", "", 1),
+            cfg_instruction(0x1001, "ret", "", 1),
+            cfg_instruction(0x2000, "xor", "eax,eax", 2),
+            cfg_instruction(0x2002, "ret", "", 1),
+        ]);
+        let analysis = BinaryAnalysis {
+            symbols: vec![SymbolSummary {
+                address: Some(0x2000),
+                name: "symbol_function".to_string(),
+                kind: SymbolKind::Function,
+            }],
+            ..BinaryAnalysis::default()
+        };
+
+        let app = App::new(
+            vec![
+                instruction(0x1000, "nop", 1),
+                instruction(0x1001, "ret", 1),
+                instruction(0x2000, "xor eax,eax", 2),
+                instruction(0x2002, "ret", 1),
+            ],
+            Some(cfg),
+            analysis,
+        );
+
+        assert!(app
+            .functions
+            .iter()
+            .any(|function| function.entry == Address(0x2000)));
+    }
+
+    #[test]
     fn rename_prompt_updates_project_and_search() {
         let mut app = App::new(
             vec![instruction(0x1000, "push rbp", 1)],

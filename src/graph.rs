@@ -535,7 +535,19 @@ impl ControlFlowGraph {
     }
 
     pub fn function_summaries(&self) -> Vec<FunctionSummary> {
-        let entries = self.function_entries();
+        self.function_summaries_with_entries(std::iter::empty::<Address>())
+    }
+
+    pub fn function_summaries_with_entries(
+        &self,
+        extra_entries: impl IntoIterator<Item = Address>,
+    ) -> Vec<FunctionSummary> {
+        let mut entries = self.function_entries();
+        entries.extend(
+            extra_entries
+                .into_iter()
+                .filter(|entry| self.blocks.contains_key(entry)),
+        );
         let mut summaries: Vec<FunctionSummary> = entries
             .iter()
             .map(|entry| self.summarize_function(*entry, &entries))
@@ -636,11 +648,16 @@ fn is_x86_prologue(block: &BasicBlock) -> bool {
         return false;
     };
 
+    let first_operands = first.operands.to_lowercase();
+    let second_operands = second.operands.to_lowercase();
+    let has_frame_pointer = first_operands.contains("rbp") || first_operands.contains("ebp");
+    let moves_stack_to_frame = (second_operands.contains("rbp") && second_operands.contains("rsp"))
+        || (second_operands.contains("ebp") && second_operands.contains("esp"));
+
     first.mnemonic.eq_ignore_ascii_case("push")
-        && first.operands.contains("rbp")
+        && has_frame_pointer
         && second.mnemonic.eq_ignore_ascii_case("mov")
-        && second.operands.contains("rbp")
-        && second.operands.contains("rsp")
+        && moves_stack_to_frame
 }
 
 fn parse_nasm_hex(token: &str) -> Option<u64> {
@@ -712,5 +729,41 @@ mod tests {
             .unwrap();
 
         assert_eq!(callee.caller_count, 1);
+    }
+
+    #[test]
+    fn detects_32_bit_frame_pointer_prologue() {
+        let mut cfg = ControlFlowGraph::new();
+        cfg.build_from_instructions(vec![
+            instr(0x1000, "jmp", "0x1100", 5),
+            instr(0x1100, "push", "ebp", 1),
+            instr(0x1101, "mov", "ebp,esp", 2),
+            instr(0x1103, "ret", "", 1),
+        ]);
+
+        assert!(cfg
+            .function_summaries()
+            .iter()
+            .any(|summary| summary.entry == Address(0x1100)));
+    }
+
+    #[test]
+    fn symbol_entries_seed_function_summaries() {
+        let mut cfg = ControlFlowGraph::new();
+        cfg.build_from_instructions(vec![
+            instr(0x1000, "nop", "", 1),
+            instr(0x1001, "ret", "", 1),
+            instr(0x2000, "xor", "eax,eax", 2),
+            instr(0x2002, "ret", "", 1),
+        ]);
+
+        let summaries = cfg.function_summaries_with_entries([Address(0x2000)]);
+
+        assert!(summaries
+            .iter()
+            .any(|summary| summary.entry == Address(0x2000)));
+        assert!(!summaries
+            .iter()
+            .any(|summary| summary.entry == Address(0x3000)));
     }
 }

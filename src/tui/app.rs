@@ -7,7 +7,7 @@ use crate::arch::x86::Instruction;
 use crate::graph::{Address, ControlFlowGraph, EdgeType, FunctionSummary};
 use crate::graph_renderer::GraphRenderer;
 use crate::graph_view::GraphView;
-use crate::parser::{BinaryAnalysis, ImportSummary, StringSummary, SymbolSummary};
+use crate::parser::{BinaryAnalysis, ImportSummary, StringSummary, SymbolKind, SymbolSummary};
 use crate::project::AnalysisProject;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -190,7 +190,7 @@ impl App {
         let mut graph_view = GraphView::new();
         let functions = cfg
             .as_ref()
-            .map(ControlFlowGraph::function_summaries)
+            .map(|cfg| cfg.function_summaries_with_entries(function_symbol_entries(&analysis)))
             .unwrap_or_default();
         let names = build_name_items(&analysis);
         let xrefs = cfg.as_ref().map(build_xref_items).unwrap_or_default();
@@ -1065,6 +1065,15 @@ fn build_name_items(analysis: &BinaryAnalysis) -> Vec<NameItem> {
     names.extend(analysis.strings.iter().cloned().map(NameItem::String));
     names.sort_by_key(|item| (item.address().unwrap_or(u64::MAX), item.kind()));
     names
+}
+
+fn function_symbol_entries(analysis: &BinaryAnalysis) -> Vec<Address> {
+    analysis
+        .symbols
+        .iter()
+        .filter(|symbol| symbol.kind == SymbolKind::Function)
+        .filter_map(|symbol| symbol.address.map(Address))
+        .collect()
 }
 
 fn build_xref_items(cfg: &ControlFlowGraph) -> Vec<XrefItem> {
