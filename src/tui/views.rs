@@ -76,6 +76,10 @@ pub(crate) fn ui(f: &mut Frame, app: &mut App) {
     // Render status bar
     render_status_bar(f, app, chunks[2]);
 
+    if app.bookmarks_overlay {
+        render_bookmarks_overlay(f, app);
+    }
+
     // Render help overlay if needed
     if app.show_help {
         render_help(f);
@@ -972,7 +976,7 @@ fn render_status_bar(f: &mut Frame, app: &App, area: Rect) {
             .map(|message| format!(" | {message}"))
             .unwrap_or_default();
         format!(
-            "Instructions: {} | Functions: {} | Names: {} | Xrefs: {} | Selected: {} | Tab: {:?} | R rename, ; comment, b bookmark, S save, g goto, '/' search, h help, q quit{}{}",
+            "Instructions: {} | Functions: {} | Names: {} | Xrefs: {} | Selected: {} | Tab: {:?} | R rename, ; comment, b/B bookmark/list, S save, g goto, '/' search, h help, q quit{}{}",
             app.instructions.len(),
             app.functions.len(),
             app.names.len(),
@@ -1067,6 +1071,10 @@ fn render_help(f: &mut Frame) {
             Span::raw("- Toggle bookmark"),
         ]),
         Line::from(vec![
+            Span::styled("  B          ", Style::default().fg(Color::Green)),
+            Span::raw("- Open bookmark list"),
+        ]),
+        Line::from(vec![
             Span::styled("  S          ", Style::default().fg(Color::Green)),
             Span::raw("- Save project"),
         ]),
@@ -1146,6 +1154,56 @@ fn render_help(f: &mut Frame) {
         .wrap(Wrap { trim: true });
 
     f.render_widget(paragraph, area);
+}
+
+fn render_bookmarks_overlay(f: &mut Frame, app: &mut App) {
+    let area = centered_rect(58, 50, f.area());
+    f.render_widget(RatatuiClear, area);
+
+    let items: Vec<ListItem> = if app.project.bookmarks.is_empty() {
+        vec![ListItem::new(Line::from("No bookmarks"))]
+    } else {
+        app.project
+            .bookmarks
+            .iter()
+            .map(|bookmark| {
+                let name = app
+                    .name_for(bookmark.address)
+                    .or(bookmark.label.as_deref())
+                    .unwrap_or("");
+                let comment = app.comment_for(bookmark.address).unwrap_or("");
+                let suffix = if !name.is_empty() {
+                    format!("  {name}")
+                } else if !comment.is_empty() {
+                    format!("  ; {comment}")
+                } else {
+                    String::new()
+                };
+                ListItem::new(Line::from(vec![
+                    Span::styled(
+                        format!("{:#014x}", bookmark.address),
+                        Style::default().fg(Color::Cyan),
+                    ),
+                    Span::styled(suffix, Style::default().fg(Color::Green)),
+                ]))
+            })
+            .collect()
+    };
+
+    let list = List::new(items)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title("Bookmarks - Enter jump, Esc/B close"),
+        )
+        .highlight_style(
+            Style::default()
+                .add_modifier(Modifier::BOLD)
+                .bg(Color::Blue),
+        )
+        .highlight_symbol("> ");
+
+    f.render_stateful_widget(list, area, &mut app.bookmark_list_state);
 }
 
 fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {

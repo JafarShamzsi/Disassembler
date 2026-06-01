@@ -93,6 +93,7 @@ cargo build --release
 - `R`: Rename selected instruction or function
 - `;`: Add or edit a comment
 - `b`: Toggle bookmark
+- `B`: Open bookmark list and jump to saved addresses
 - `S`: Save project
 - `2`: Jump to Functions
 - `3`: Jump to Names

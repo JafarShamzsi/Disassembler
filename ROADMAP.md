@@ -78,7 +78,7 @@ Acceptance criteria:
 
 ## Phase 3: Analysis Database
 
-Status: in progress. Project save/load foundations, core TUI annotation actions, inline annotation display, and annotated exports are implemented; bookmark list UI remains.
+Status: complete. Project save/load, TUI rename/comment/bookmark actions, bookmark list navigation, inline annotation display, and annotated exports are implemented.
 
 Purpose: support the core IDA workflow: rename, comment, bookmark, save, reload.
 

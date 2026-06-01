@@ -403,6 +403,31 @@ mod tests {
     }
 
     #[test]
+    fn bookmark_overlay_jumps_to_selected_bookmark() {
+        let mut app = App::new(
+            vec![
+                instruction(0x1000, "nop", 1),
+                instruction(0x2000, "push rbp", 1),
+                instruction(0x3000, "ret", 1),
+            ],
+            None,
+            BinaryAnalysis::default(),
+        );
+        app.project.toggle_bookmark(0x1000, None);
+        app.project.toggle_bookmark(0x3000, None);
+
+        app.open_bookmarks_overlay();
+        app.next_bookmark();
+        app.jump_to_selected_bookmark();
+
+        assert!(!app.bookmarks_overlay);
+        assert_eq!(app.current_tab, Tab::Instructions);
+        assert_eq!(app.selected_instruction, Some(2));
+        assert_eq!(app.instruction_list_state.selected(), Some(2));
+        assert_eq!(app.back_stack.len(), 1);
+    }
+
+    #[test]
     fn app_project_save_round_trips_annotations() {
         let path = std::env::temp_dir().join(format!(
             "disassembler-tui-project-test-{}.json",

@@ -24,7 +24,15 @@ pub(crate) fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> i
             if let Event::Key(key) = event::read()? {
                 if key.kind == KeyEventKind::Press {
                     // Handle key events...
-                    if app.prompt.is_some() {
+                    if app.bookmarks_overlay {
+                        match key.code {
+                            KeyCode::Esc | KeyCode::Char('B') => app.close_bookmarks_overlay(),
+                            KeyCode::Enter => app.jump_to_selected_bookmark(),
+                            KeyCode::Down | KeyCode::Char('j') => app.next_bookmark(),
+                            KeyCode::Up | KeyCode::Char('k') => app.previous_bookmark(),
+                            _ => {}
+                        }
+                    } else if app.prompt.is_some() {
                         match key.code {
                             KeyCode::Esc => app.cancel_prompt(),
                             KeyCode::Enter => app.commit_prompt(),
@@ -79,6 +87,7 @@ pub(crate) fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> i
                             KeyCode::Char('R') => app.begin_rename(),
                             KeyCode::Char(';') => app.begin_comment(),
                             KeyCode::Char('b') => app.toggle_bookmark_at_target(),
+                            KeyCode::Char('B') => app.toggle_bookmarks_overlay(),
                             KeyCode::Char('S') => app.save_project()?,
                             KeyCode::Char('u') => app.go_back(),
                             KeyCode::Char('r') => app.go_forward(),

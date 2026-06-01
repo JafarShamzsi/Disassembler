@@ -125,6 +125,9 @@ pub struct App {
     pub project_path: Option<PathBuf>,
     pub dirty: bool,
     pub prompt: Option<EditPrompt>,
+    pub bookmarks_overlay: bool,
+    pub bookmark_list_state: ListState,
+    pub selected_bookmark: Option<usize>,
     pub name_by_address: HashMap<u64, String>,
     pub comment_by_address: HashMap<u64, String>,
     pub current_tab: Tab,
@@ -205,6 +208,9 @@ impl App {
             project_path,
             dirty: false,
             prompt: None,
+            bookmarks_overlay: false,
+            bookmark_list_state: ListState::default(),
+            selected_bookmark: None,
             name_by_address: HashMap::new(),
             comment_by_address: HashMap::new(),
             current_tab: Tab::Instructions,
@@ -352,10 +358,104 @@ impl App {
         self.project.toggle_bookmark(target.0, None);
         self.dirty = true;
         self.status_message = if self.project.is_bookmarked(target.0) {
+            self.selected_bookmark = self
+                .project
+                .bookmarks
+                .iter()
+                .position(|bookmark| bookmark.address == target.0);
+            self.bookmark_list_state.select(self.selected_bookmark);
             Some(format!("Bookmarked {}", target))
         } else {
+            if self.project.bookmarks.is_empty() {
+                self.selected_bookmark = None;
+                self.bookmark_list_state.select(None);
+            } else {
+                let next = self
+                    .selected_bookmark
+                    .unwrap_or_default()
+                    .min(self.project.bookmarks.len() - 1);
+                self.selected_bookmark = Some(next);
+                self.bookmark_list_state.select(Some(next));
+            }
             Some(format!("Removed bookmark {}", target))
         };
+    }
+
+    pub fn toggle_bookmarks_overlay(&mut self) {
+        if self.bookmarks_overlay {
+            self.close_bookmarks_overlay();
+        } else {
+            self.open_bookmarks_overlay();
+        }
+    }
+
+    pub fn open_bookmarks_overlay(&mut self) {
+        self.bookmarks_overlay = true;
+        if self.project.bookmarks.is_empty() {
+            self.selected_bookmark = None;
+            self.bookmark_list_state.select(None);
+        } else {
+            let selected = self
+                .selected_bookmark
+                .unwrap_or_default()
+                .min(self.project.bookmarks.len() - 1);
+            self.selected_bookmark = Some(selected);
+            self.bookmark_list_state.select(Some(selected));
+        }
+    }
+
+    pub fn close_bookmarks_overlay(&mut self) {
+        self.bookmarks_overlay = false;
+    }
+
+    pub fn next_bookmark(&mut self) {
+        if self.project.bookmarks.is_empty() {
+            return;
+        }
+        let next = self
+            .selected_bookmark
+            .map(|idx| (idx + 1).min(self.project.bookmarks.len() - 1))
+            .unwrap_or(0);
+        self.selected_bookmark = Some(next);
+        self.bookmark_list_state.select(Some(next));
+    }
+
+    pub fn previous_bookmark(&mut self) {
+        if self.project.bookmarks.is_empty() {
+            return;
+        }
+        let previous = self.selected_bookmark.unwrap_or_default().saturating_sub(1);
+        self.selected_bookmark = Some(previous);
+        self.bookmark_list_state.select(Some(previous));
+    }
+
+    pub fn jump_to_selected_bookmark(&mut self) {
+        let Some(bookmark_idx) = self.selected_bookmark else {
+            self.status_message = Some("No bookmark selected".to_string());
+            return;
+        };
+        let Some(bookmark_address) = self
+            .project
+            .bookmarks
+            .get(bookmark_idx)
+            .map(|bookmark| bookmark.address)
+        else {
+            return;
+        };
+        let Some(instruction_idx) = self.find_instruction_at_or_after(Address(bookmark_address))
+        else {
+            self.status_message = Some(format!(
+                "Bookmark outside disassembly: {:#x}",
+                bookmark_address
+            ));
+            return;
+        };
+
+        self.push_history();
+        self.select_instruction(instruction_idx);
+        self.current_tab = Tab::Instructions;
+        self.close_bookmarks_overlay();
+        self.status_message = Some(format!("Jumped to bookmark {:#x}", bookmark_address));
     }
 
     pub fn save_project(&mut self) -> io::Result<()> {
