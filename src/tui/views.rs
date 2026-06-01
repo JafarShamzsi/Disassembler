@@ -6,7 +6,7 @@ use ratatui::{
     Frame,
 };
 
-use super::app::{App, NameItem, Tab};
+use super::app::{App, EditPromptKind, NameItem, Tab};
 use crate::graph::ControlFlowGraph;
 
 pub(crate) fn ui(f: &mut Frame, app: &mut App) {
@@ -111,9 +111,34 @@ fn render_instructions(f: &mut Frame, app: &mut App, area: Rect) {
                 Style::default()
             };
 
-            // USE CACHED STRING - NO FORMATTING!
-            let content = &app.instruction_display_cache[instr_idx];
-            ListItem::new(Line::from(Span::styled(content.clone(), style)))
+            let instruction = &app.instructions[instr_idx];
+            let mut lines = Vec::new();
+            if let Some(name) = app.name_for(instruction.address) {
+                lines.push(Line::from(vec![
+                    Span::styled(
+                        format!("{:#08x}  ", instruction.address),
+                        Style::default().fg(Color::Cyan),
+                    ),
+                    Span::styled(format!("{name}:"), Style::default().fg(Color::Green)),
+                ]));
+            }
+
+            let mut row = vec![Span::styled(
+                app.instruction_display_cache[instr_idx].clone(),
+                style,
+            )];
+            if let Some(comment) = app.comment_for(instruction.address) {
+                row.push(Span::styled(
+                    format!(" ; {comment}"),
+                    Style::default().fg(Color::Green),
+                ));
+            }
+            if app.is_bookmarked(instruction.address) {
+                row.insert(0, Span::styled("* ", Style::default().fg(Color::Yellow)));
+            }
+            lines.push(Line::from(row));
+
+            ListItem::new(lines)
         })
         .collect();
 
@@ -152,6 +177,14 @@ fn render_instruction_details(f: &mut Frame, app: &App, area: Rect) {
                 Span::styled("Address: ", Style::default().fg(Color::Cyan)),
                 Span::raw(format!("{:#08x}", instr.address)),
             ]),
+            Line::from(vec![
+                Span::styled("Bookmarked: ", Style::default().fg(Color::Cyan)),
+                Span::raw(if app.is_bookmarked(instr.address) {
+                    "yes"
+                } else {
+                    "no"
+                }),
+            ]),
             Line::from(""),
             Line::from(vec![
                 Span::styled("Instruction: ", Style::default().fg(Color::Cyan)),
@@ -168,6 +201,24 @@ fn render_instruction_details(f: &mut Frame, app: &App, area: Rect) {
                 Span::raw(format!("{} bytes", instr.bytes.len())),
             ]),
         ];
+
+        if let Some(name) = app.name_for(instr.address) {
+            details_text.insert(
+                2,
+                Line::from(vec![
+                    Span::styled("Name: ", Style::default().fg(Color::Cyan)),
+                    Span::raw(name.to_string()),
+                ]),
+            );
+        }
+
+        if let Some(comment) = app.comment_for(instr.address) {
+            details_text.push(Line::from(""));
+            details_text.push(Line::from(vec![
+                Span::styled("Comment: ", Style::default().fg(Color::Cyan)),
+                Span::raw(comment.to_string()),
+            ]));
+        }
 
         // Add basic graph context if available (simplified)
         if let Some(cfg) = &app.cfg {
@@ -304,6 +355,12 @@ fn render_functions(f: &mut Frame, app: &mut App, area: Rect) {
                         Style::default().fg(Color::Cyan),
                     ),
                     Span::styled(
+                        app.name_for(function.entry.0)
+                            .map(|name| format!("  {name}"))
+                            .unwrap_or_default(),
+                        Style::default().fg(Color::Green),
+                    ),
+                    Span::styled(
                         format!("  callers: {}", function.caller_count),
                         Style::default().fg(Color::Yellow),
                     ),
@@ -375,6 +432,26 @@ fn render_function_details(f: &mut Frame, app: &App, area: Rect) {
             Style::default().fg(Color::Green),
         )]),
     ];
+
+    if let Some(name) = app.name_for(function.entry.0) {
+        lines.insert(
+            1,
+            Line::from(vec![
+                Span::styled("Name: ", Style::default().fg(Color::Cyan)),
+                Span::raw(name.to_string()),
+            ]),
+        );
+    }
+
+    if let Some(comment) = app.comment_for(function.entry.0) {
+        lines.insert(
+            2,
+            Line::from(vec![
+                Span::styled("Comment: ", Style::default().fg(Color::Cyan)),
+                Span::raw(comment.to_string()),
+            ]),
+        );
+    }
 
     if let Some(cfg) = &app.cfg {
         let callers: Vec<_> = cfg
@@ -862,7 +939,16 @@ fn render_hex_dump(f: &mut Frame, app: &App, area: Rect) {
 
 // Update render_status_bar to show search mode
 fn render_status_bar(f: &mut Frame, app: &App, area: Rect) {
-    let status = if app.address_jump_mode {
+    let status = if let Some(prompt) = &app.prompt {
+        let label = match prompt.kind {
+            EditPromptKind::Rename => "RENAME",
+            EditPromptKind::Comment => "COMMENT",
+        };
+        format!(
+            "{label} {}: '{}' | Enter saves, ESC cancels",
+            prompt.target, prompt.input
+        )
+    } else if app.address_jump_mode {
         format!(
             "GOTO: '{}' | Enter jumps, ESC cancels | Back: {} Forward: {}",
             app.address_jump_query,
@@ -886,7 +972,7 @@ fn render_status_bar(f: &mut Frame, app: &App, area: Rect) {
             .map(|message| format!(" | {message}"))
             .unwrap_or_default();
         format!(
-            "Instructions: {} | Functions: {} | Names: {} | Xrefs: {} | Selected: {} | Tab: {:?} | g goto, u/r back/forward, n/N search, '/' search, h help, q quit{}",
+            "Instructions: {} | Functions: {} | Names: {} | Xrefs: {} | Selected: {} | Tab: {:?} | R rename, ; comment, b bookmark, S save, g goto, '/' search, h help, q quit{}{}",
             app.instructions.len(),
             app.functions.len(),
             app.names.len(),
@@ -894,6 +980,7 @@ fn render_status_bar(f: &mut Frame, app: &App, area: Rect) {
             app.selected_instruction
                 .map_or("None".to_string(), |i| (i + 1).to_string()),
             app.current_tab,
+            if app.dirty { " | unsaved" } else { "" },
             message
         )
     };
@@ -959,6 +1046,29 @@ fn render_help(f: &mut Frame) {
         Line::from(vec![
             Span::styled("  n/N        ", Style::default().fg(Color::Green)),
             Span::raw("- Next/previous search result"),
+        ]),
+        Line::from(""),
+        Line::from(vec![Span::styled(
+            "Annotations:",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        )]),
+        Line::from(vec![
+            Span::styled("  R          ", Style::default().fg(Color::Green)),
+            Span::raw("- Rename selected instruction/function"),
+        ]),
+        Line::from(vec![
+            Span::styled("  ;          ", Style::default().fg(Color::Green)),
+            Span::raw("- Comment selected instruction/function"),
+        ]),
+        Line::from(vec![
+            Span::styled("  b          ", Style::default().fg(Color::Green)),
+            Span::raw("- Toggle bookmark"),
+        ]),
+        Line::from(vec![
+            Span::styled("  S          ", Style::default().fg(Color::Green)),
+            Span::raw("- Save project"),
         ]),
         Line::from(""),
         Line::from(vec![Span::styled(

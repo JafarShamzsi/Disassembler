@@ -6,7 +6,7 @@ use super::app::{App, Tab};
 use super::views::ui;
 use crate::graph_view::NavigationDirection;
 
-pub(crate) fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Result<()> {
+pub(crate) fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Result<App> {
     let mut last_tick = std::time::Instant::now();
     let tick_rate = std::time::Duration::from_millis(16); // 60 FPS limit
 
@@ -24,7 +24,15 @@ pub(crate) fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> i
             if let Event::Key(key) = event::read()? {
                 if key.kind == KeyEventKind::Press {
                     // Handle key events...
-                    if app.address_jump_mode {
+                    if app.prompt.is_some() {
+                        match key.code {
+                            KeyCode::Esc => app.cancel_prompt(),
+                            KeyCode::Enter => app.commit_prompt(),
+                            KeyCode::Backspace => app.prompt_pop_char(),
+                            KeyCode::Char(c) => app.prompt_push_char(c),
+                            _ => {}
+                        }
+                    } else if app.address_jump_mode {
                         match key.code {
                             KeyCode::Esc => app.exit_address_jump_mode(),
                             KeyCode::Enter => app.jump_to_address_query(),
@@ -52,15 +60,26 @@ pub(crate) fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> i
                         }
                     } else {
                         match key.code {
-                            KeyCode::Char('q') => return Ok(()),
+                            KeyCode::Char('q') => {
+                                app.autosave_on_exit()?;
+                                return Ok(app);
+                            }
                             KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                                 // Handle Ctrl+C gracefully
-                                return Ok(());
+                                app.autosave_on_exit()?;
+                                return Ok(app);
                             }
-                            KeyCode::Esc => return Ok(()),
+                            KeyCode::Esc => {
+                                app.autosave_on_exit()?;
+                                return Ok(app);
+                            }
                             KeyCode::Char('h') | KeyCode::F(1) => app.toggle_help(),
                             KeyCode::Char('/') => app.enter_search_mode(),
                             KeyCode::Char('g') => app.enter_address_jump_mode(),
+                            KeyCode::Char('R') => app.begin_rename(),
+                            KeyCode::Char(';') => app.begin_comment(),
+                            KeyCode::Char('b') => app.toggle_bookmark_at_target(),
+                            KeyCode::Char('S') => app.save_project()?,
                             KeyCode::Char('u') => app.go_back(),
                             KeyCode::Char('r') => app.go_forward(),
                             KeyCode::Char('n') => app.next_search_match(),

@@ -14,6 +14,7 @@ mod tests {
     use crate::graph::{Address, Instruction as CfgInstruction};
     use crate::parser::BinaryAnalysis;
     use crate::parser::{StringSummary, SymbolKind, SymbolSummary};
+    use crate::project::AnalysisProject;
 
     fn instruction(address: u64, text: &str, size: usize) -> Instruction {
         Instruction {
@@ -339,5 +340,94 @@ mod tests {
             Some(Address(0x2000))
         );
         assert_eq!(app.selected_search_match, Some(0));
+    }
+
+    #[test]
+    fn rename_prompt_updates_project_and_search() {
+        let mut app = App::new(
+            vec![instruction(0x1000, "push rbp", 1)],
+            None,
+            BinaryAnalysis::default(),
+        );
+
+        app.begin_rename();
+        app.prompt_push_char('e');
+        app.prompt_push_char('n');
+        app.prompt_push_char('t');
+        app.prompt_push_char('r');
+        app.prompt_push_char('y');
+        app.commit_prompt();
+
+        assert_eq!(app.project.name_for(0x1000), Some("entry"));
+        assert_eq!(app.name_for(0x1000), Some("entry"));
+        assert!(app.dirty);
+
+        app.update_search("entry".to_string());
+        assert_eq!(app.search_matches, vec![app::SearchMatch::Instruction(0)]);
+    }
+
+    #[test]
+    fn comment_prompt_updates_project() {
+        let mut app = App::new(
+            vec![instruction(0x1000, "call 0000000000002000h", 5)],
+            None,
+            BinaryAnalysis::default(),
+        );
+
+        app.begin_comment();
+        for c in "interesting call".chars() {
+            app.prompt_push_char(c);
+        }
+        app.commit_prompt();
+
+        assert_eq!(app.project.comment_for(0x1000), Some("interesting call"));
+        assert_eq!(app.comment_for(0x1000), Some("interesting call"));
+        assert!(app.dirty);
+    }
+
+    #[test]
+    fn bookmark_toggle_updates_project() {
+        let mut app = App::new(
+            vec![instruction(0x1000, "nop", 1)],
+            None,
+            BinaryAnalysis::default(),
+        );
+
+        app.toggle_bookmark_at_target();
+        assert!(app.project.is_bookmarked(0x1000));
+        assert!(app.is_bookmarked(0x1000));
+
+        app.toggle_bookmark_at_target();
+        assert!(!app.project.is_bookmarked(0x1000));
+        assert!(!app.is_bookmarked(0x1000));
+    }
+
+    #[test]
+    fn app_project_save_round_trips_annotations() {
+        let path = std::env::temp_dir().join(format!(
+            "disassembler-tui-project-test-{}.json",
+            std::process::id()
+        ));
+        let project = AnalysisProject::from_binary("sample.exe", b"binary");
+        let mut app = App::with_project(
+            vec![instruction(0x1000, "ret", 1)],
+            None,
+            BinaryAnalysis::default(),
+            project,
+            Some(path.clone()),
+        );
+
+        app.begin_rename();
+        for c in "entry".chars() {
+            app.prompt_push_char(c);
+        }
+        app.commit_prompt();
+        app.save_project().unwrap();
+
+        let loaded = AnalysisProject::load(&path).unwrap();
+        let _ = std::fs::remove_file(&path);
+
+        assert_eq!(loaded.name_for(0x1000), Some("entry"));
+        assert!(!app.dirty);
     }
 }

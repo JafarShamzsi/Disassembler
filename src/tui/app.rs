@@ -1,10 +1,14 @@
 use ratatui::widgets::ListState;
+use std::collections::HashMap;
+use std::io;
+use std::path::PathBuf;
 
 use crate::arch::x86::Instruction;
 use crate::graph::{Address, ControlFlowGraph, EdgeType, FunctionSummary};
 use crate::graph_renderer::GraphRenderer;
 use crate::graph_view::GraphView;
 use crate::parser::{BinaryAnalysis, ImportSummary, StringSummary, SymbolSummary};
+use crate::project::AnalysisProject;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Tab {
@@ -59,6 +63,19 @@ pub enum SearchMatch {
     Xref(usize),
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EditPromptKind {
+    Rename,
+    Comment,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EditPrompt {
+    pub kind: EditPromptKind,
+    pub target: Address,
+    pub input: String,
+}
+
 impl XrefItem {
     pub(crate) fn kind(&self) -> &'static str {
         match self.edge_type {
@@ -104,6 +121,12 @@ pub struct App {
     pub instructions: Vec<Instruction>,
     pub cfg: Option<ControlFlowGraph>,
     pub analysis: BinaryAnalysis,
+    pub project: AnalysisProject,
+    pub project_path: Option<PathBuf>,
+    pub dirty: bool,
+    pub prompt: Option<EditPrompt>,
+    pub name_by_address: HashMap<u64, String>,
+    pub comment_by_address: HashMap<u64, String>,
     pub current_tab: Tab,
     pub instruction_list_state: ListState,
     pub function_list_state: ListState,
@@ -140,6 +163,22 @@ impl App {
         cfg: Option<ControlFlowGraph>,
         analysis: BinaryAnalysis,
     ) -> Self {
+        Self::with_project(
+            instructions,
+            cfg,
+            analysis,
+            AnalysisProject::from_binary("<memory>", &[]),
+            None,
+        )
+    }
+
+    pub fn with_project(
+        instructions: Vec<Instruction>,
+        cfg: Option<ControlFlowGraph>,
+        analysis: BinaryAnalysis,
+        project: AnalysisProject,
+        project_path: Option<PathBuf>,
+    ) -> Self {
         let instruction_display_cache: Vec<String> = instructions
             .iter()
             .map(|instr| format!("{:#08x}: {}", instr.address, instr.text))
@@ -162,6 +201,12 @@ impl App {
             instructions,
             cfg,
             analysis,
+            project,
+            project_path,
+            dirty: false,
+            prompt: None,
+            name_by_address: HashMap::new(),
+            comment_by_address: HashMap::new(),
             current_tab: Tab::Instructions,
             instruction_list_state: ListState::default(),
             function_list_state: ListState::default(),
@@ -191,6 +236,7 @@ impl App {
             graph_view,
             graph_renderer: GraphRenderer::default(),
         };
+        app.refresh_annotation_caches();
 
         if !app.instructions.is_empty() {
             app.instruction_list_state.select(Some(0));
@@ -214,6 +260,148 @@ impl App {
         }
 
         app
+    }
+
+    pub fn current_target_address(&self) -> Option<Address> {
+        match self.current_tab {
+            Tab::Instructions => self
+                .selected_instruction
+                .and_then(|idx| self.instructions.get(idx))
+                .map(|instruction| Address(instruction.address)),
+            Tab::Functions => self
+                .selected_function
+                .and_then(|idx| self.functions.get(idx))
+                .map(|function| function.entry),
+            _ => None,
+        }
+    }
+
+    pub fn begin_rename(&mut self) {
+        let Some(target) = self.current_target_address() else {
+            self.status_message =
+                Some("Rename is available from Instructions or Functions".to_string());
+            return;
+        };
+        let input = self.name_for(target.0).unwrap_or_default().to_string();
+        self.prompt = Some(EditPrompt {
+            kind: EditPromptKind::Rename,
+            target,
+            input,
+        });
+    }
+
+    pub fn begin_comment(&mut self) {
+        let Some(target) = self.current_target_address() else {
+            self.status_message =
+                Some("Comments are available from Instructions or Functions".to_string());
+            return;
+        };
+        let input = self.comment_for(target.0).unwrap_or_default().to_string();
+        self.prompt = Some(EditPrompt {
+            kind: EditPromptKind::Comment,
+            target,
+            input,
+        });
+    }
+
+    pub fn cancel_prompt(&mut self) {
+        self.prompt = None;
+        self.status_message = Some("Edit canceled".to_string());
+    }
+
+    pub fn prompt_push_char(&mut self, c: char) {
+        if let Some(prompt) = &mut self.prompt {
+            prompt.input.push(c);
+        }
+    }
+
+    pub fn prompt_pop_char(&mut self) {
+        if let Some(prompt) = &mut self.prompt {
+            prompt.input.pop();
+        }
+    }
+
+    pub fn commit_prompt(&mut self) {
+        let Some(prompt) = self.prompt.take() else {
+            return;
+        };
+
+        let input = prompt.input.trim().to_string();
+        match prompt.kind {
+            EditPromptKind::Rename => {
+                self.project.set_user_name(prompt.target.0, input);
+                self.status_message = Some(format!("Updated name at {}", prompt.target));
+            }
+            EditPromptKind::Comment => {
+                self.project.set_comment(prompt.target.0, input);
+                self.status_message = Some(format!("Updated comment at {}", prompt.target));
+            }
+        }
+        self.dirty = true;
+        self.refresh_annotation_caches();
+        self.last_search_query.clear();
+        self.apply_filter();
+    }
+
+    pub fn toggle_bookmark_at_target(&mut self) {
+        let Some(target) = self.current_target_address() else {
+            self.status_message =
+                Some("Bookmarks are available from Instructions or Functions".to_string());
+            return;
+        };
+        self.project.toggle_bookmark(target.0, None);
+        self.dirty = true;
+        self.status_message = if self.project.is_bookmarked(target.0) {
+            Some(format!("Bookmarked {}", target))
+        } else {
+            Some(format!("Removed bookmark {}", target))
+        };
+    }
+
+    pub fn save_project(&mut self) -> io::Result<()> {
+        let Some(path) = self.project_path.clone() else {
+            self.status_message = Some("No project path configured".to_string());
+            return Ok(());
+        };
+
+        self.project.save(&path)?;
+        self.dirty = false;
+        self.status_message = Some(format!("Saved project {}", path.display()));
+        Ok(())
+    }
+
+    pub fn autosave_on_exit(&mut self) -> io::Result<()> {
+        if self.dirty && self.project_path.is_some() {
+            self.save_project()?;
+        }
+        Ok(())
+    }
+
+    pub fn name_for(&self, address: u64) -> Option<&str> {
+        self.name_by_address.get(&address).map(String::as_str)
+    }
+
+    pub fn comment_for(&self, address: u64) -> Option<&str> {
+        self.comment_by_address.get(&address).map(String::as_str)
+    }
+
+    pub fn is_bookmarked(&self, address: u64) -> bool {
+        self.project.is_bookmarked(address)
+    }
+
+    fn refresh_annotation_caches(&mut self) {
+        self.name_by_address = self
+            .project
+            .user_names
+            .iter()
+            .map(|name| (name.address, name.name.clone()))
+            .collect();
+        self.comment_by_address = self
+            .project
+            .comments
+            .iter()
+            .map(|comment| (comment.address, comment.text.clone()))
+            .collect();
     }
 
     pub fn next_instruction(&mut self) {
@@ -682,7 +870,7 @@ impl App {
             self.filtered_instructions = (0..self.instructions.len())
                 .filter(|&i| {
                     // Use cached display strings instead of formatting
-                    self.instruction_display_cache[i]
+                    self.instruction_search_text(i)
                         .to_lowercase()
                         .contains(&search_lower)
                 })
@@ -709,7 +897,7 @@ impl App {
         let mut matches = Vec::new();
 
         matches.extend((0..self.instructions.len()).filter_map(|idx| {
-            self.instruction_display_cache[idx]
+            self.instruction_search_text(idx)
                 .to_lowercase()
                 .contains(query)
                 .then_some(SearchMatch::Instruction(idx))
@@ -721,8 +909,10 @@ impl App {
                 .enumerate()
                 .filter_map(|(idx, function)| {
                     let text = format!(
-                        "{:#x} blocks:{} instructions:{} callers:{}",
+                        "{:#x} {} {} blocks:{} instructions:{} callers:{}",
                         function.entry.0,
+                        self.name_for(function.entry.0).unwrap_or_default(),
+                        self.comment_for(function.entry.0).unwrap_or_default(),
                         function.block_count,
                         function.instruction_count,
                         function.caller_count
@@ -752,6 +942,16 @@ impl App {
         }));
 
         matches
+    }
+
+    fn instruction_search_text(&self, idx: usize) -> String {
+        let instruction = &self.instructions[idx];
+        format!(
+            "{} {} {}",
+            self.instruction_display_cache[idx],
+            self.name_for(instruction.address).unwrap_or_default(),
+            self.comment_for(instruction.address).unwrap_or_default()
+        )
     }
 }
 

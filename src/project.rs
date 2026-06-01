@@ -44,6 +44,12 @@ impl AnalysisProject {
 
     pub fn set_user_name(&mut self, address: u64, name: impl Into<String>) {
         let name = name.into();
+        if name.trim().is_empty() {
+            self.user_names
+                .retain(|user_name| user_name.address != address);
+            return;
+        }
+
         if let Some(existing) = self
             .user_names
             .iter_mut()
@@ -58,6 +64,11 @@ impl AnalysisProject {
 
     pub fn set_comment(&mut self, address: u64, text: impl Into<String>) {
         let text = text.into();
+        if text.trim().is_empty() {
+            self.comments.retain(|comment| comment.address != address);
+            return;
+        }
+
         if let Some(existing) = self
             .comments
             .iter_mut()
@@ -81,6 +92,26 @@ impl AnalysisProject {
             self.bookmarks.push(Bookmark { address, label });
             self.bookmarks.sort_by_key(|bookmark| bookmark.address);
         }
+    }
+
+    pub fn name_for(&self, address: u64) -> Option<&str> {
+        self.user_names
+            .iter()
+            .find(|user_name| user_name.address == address)
+            .map(|user_name| user_name.name.as_str())
+    }
+
+    pub fn comment_for(&self, address: u64) -> Option<&str> {
+        self.comments
+            .iter()
+            .find(|comment| comment.address == address)
+            .map(|comment| comment.text.as_str())
+    }
+
+    pub fn is_bookmarked(&self, address: u64) -> bool {
+        self.bookmarks
+            .iter()
+            .any(|bookmark| bookmark.address == address)
     }
 }
 
@@ -173,8 +204,24 @@ mod tests {
 
         assert_eq!(project.user_names.len(), 1);
         assert_eq!(project.user_names[0].name, "new");
+        assert_eq!(project.name_for(0x1000), Some("new"));
         assert_eq!(project.comments.len(), 1);
         assert_eq!(project.comments[0].text, "new comment");
+        assert_eq!(project.comment_for(0x1000), Some("new comment"));
         assert!(project.bookmarks.is_empty());
+        assert!(!project.is_bookmarked(0x1000));
+    }
+
+    #[test]
+    fn empty_name_and_comment_clear_existing_values() {
+        let mut project = AnalysisProject::from_binary("sample.exe", b"binary");
+
+        project.set_user_name(0x1000, "entry");
+        project.set_comment(0x1000, "note");
+        project.set_user_name(0x1000, "");
+        project.set_comment(0x1000, "   ");
+
+        assert_eq!(project.name_for(0x1000), None);
+        assert_eq!(project.comment_for(0x1000), None);
     }
 }

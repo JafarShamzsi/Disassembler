@@ -78,7 +78,7 @@ Acceptance criteria:
 
 ## Phase 3: Analysis Database
 
-Status: in progress. Project save/load foundations are in progress.
+Status: in progress. Project save/load foundations and core TUI annotation actions are implemented; annotated exports and bookmark list UI remain.
 
 Purpose: support the core IDA workflow: rename, comment, bookmark, save, reload.
 
@@ -92,6 +92,7 @@ Work:
 - Add JSON project save/load.
 - Add TUI actions for rename, comment, bookmark, and bookmark list.
 - Display user names/comments inline in instruction and function views.
+- Add annotated export support for names and comments.
 
 Acceptance criteria:
 - User can rename a function, add a comment, save, restart, reload, and see the same analysis.

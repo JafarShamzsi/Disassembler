@@ -72,6 +72,7 @@ cargo build --release
 #### Interactive TUI
 ```bash
 ./target/release/disassembler binary.exe --tui
+./target/release/disassembler binary.exe --tui --project analysis.disproj.json
 ```
 #### Screenshots
 
@@ -84,6 +85,14 @@ cargo build --release
 
 **TUI Controls:**
 - `Tab`: Switch between views
+- `g`: Jump to address
+- `/`: Search instructions, functions, names, xrefs, and annotations
+- `n` / `N`: Next/previous search result
+- `u` / `r`: Navigation back/forward
+- `R`: Rename selected instruction or function
+- `;`: Add or edit a comment
+- `b`: Toggle bookmark
+- `S`: Save project
 - `2`: Jump to Functions
 - `3`: Jump to Names
 - `4`: Jump to Xrefs

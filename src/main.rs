@@ -5,7 +5,7 @@ use disassembler::arch::{ArchConfig, ArchDisassembler, Architecture};
 use disassembler::export::{export_auto_format_with_metadata_and_analysis, ExportFormat, Exporter};
 use disassembler::graph::{Address, ControlFlowGraph, Instruction as CfgInstruction};
 use disassembler::parser::{self, AnalyzedBinary, BinaryAnalysis, BinaryMetadata};
-use disassembler::project::AnalysisProject;
+use disassembler::project::{AnalysisProject, ProjectFunction};
 use disassembler::tui;
 use std::fs::File;
 use std::io::{self, BufReader, Read};
@@ -220,7 +220,18 @@ fn main() -> io::Result<()> {
 
         // Launch TUI immediately if requested, skip all other output
         if opts.tui {
-            if let Err(e) = tui::run_tui(instructions, cfg, analysis.clone()) {
+            let mut project = loaded_project
+                .clone()
+                .unwrap_or_else(|| AnalysisProject::from_binary(file_path, &data));
+            populate_project_functions(&mut project, cfg.as_ref());
+            let project_path = opts
+                .save_project
+                .clone()
+                .or_else(|| opts.project.clone())
+                .or_else(|| Some(default_project_path(file_path)));
+
+            if let Err(e) = tui::run_tui(instructions, cfg, analysis.clone(), project, project_path)
+            {
                 eprintln!("[ERROR] TUI error: {}", e);
                 std::process::exit(1);
             }
@@ -293,18 +304,7 @@ fn main() -> io::Result<()> {
             let mut project = loaded_project
                 .clone()
                 .unwrap_or_else(|| AnalysisProject::from_binary(file_path, &data));
-            if project.functions.is_empty() {
-                if let Some(cfg) = &cfg {
-                    project.functions = cfg
-                        .function_summaries()
-                        .into_iter()
-                        .map(|function| disassembler::project::ProjectFunction {
-                            entry: function.entry.0,
-                            name: None,
-                        })
-                        .collect();
-                }
-            }
+            populate_project_functions(&mut project, cfg.as_ref());
             project.save(project_path)?;
             if !opts.tui {
                 println!(
@@ -343,6 +343,31 @@ fn main() -> io::Result<()> {
     }
 
     Ok(())
+}
+
+fn default_project_path(file_path: &std::path::Path) -> PathBuf {
+    let mut project_path = file_path.to_path_buf();
+    let file_name = file_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("analysis");
+    project_path.set_file_name(format!("{file_name}.disproj.json"));
+    project_path
+}
+
+fn populate_project_functions(project: &mut AnalysisProject, cfg: Option<&ControlFlowGraph>) {
+    if project.functions.is_empty() {
+        if let Some(cfg) = cfg {
+            project.functions = cfg
+                .function_summaries()
+                .into_iter()
+                .map(|function| ProjectFunction {
+                    entry: function.entry.0,
+                    name: None,
+                })
+                .collect();
+        }
+    }
 }
 
 fn display_names(analysis: &BinaryAnalysis) {

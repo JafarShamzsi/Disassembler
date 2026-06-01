@@ -16,6 +16,7 @@ use super::input::run_app;
 use crate::arch::x86::Instruction;
 use crate::graph::ControlFlowGraph;
 use crate::parser::BinaryAnalysis;
+use crate::project::AnalysisProject;
 
 struct TerminalCleanupGuard;
 
@@ -29,7 +30,9 @@ pub fn run_tui(
     instructions: Vec<Instruction>,
     cfg: Option<ControlFlowGraph>,
     analysis: BinaryAnalysis,
-) -> Result<(), Box<dyn std::error::Error>> {
+    project: AnalysisProject,
+    project_path: Option<std::path::PathBuf>,
+) -> Result<AnalysisProject, Box<dyn std::error::Error>> {
     // AGGRESSIVE: Reset terminal state before we even start
     emergency_terminal_reset();
 
@@ -45,7 +48,7 @@ pub fn run_tui(
     let mut terminal = Terminal::new(backend)?;
 
     // Create app and run it
-    let app = App::new(instructions, cfg, analysis);
+    let app = App::with_project(instructions, cfg, analysis, project, project_path);
     let app_result = run_app(&mut terminal, app);
 
     // Comprehensive terminal cleanup - ensure we always restore terminal state
@@ -54,8 +57,8 @@ pub fn run_tui(
     // AGGRESSIVE: Force complete terminal reset after TUI
     emergency_terminal_reset();
 
-    app_result?;
-    Ok(())
+    let app = app_result?;
+    Ok(app.project)
 }
 
 fn emergency_terminal_reset() {
