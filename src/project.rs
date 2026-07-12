@@ -43,7 +43,11 @@ impl AnalysisProject {
     }
 
     pub fn set_user_name(&mut self, address: u64, name: impl Into<String>) {
-        let name = name.into();
+        let name = name.into().trim().to_string();
+        if name.is_empty() {
+            self.remove_user_name(address);
+            return;
+        }
         if let Some(existing) = self
             .user_names
             .iter_mut()
@@ -57,7 +61,11 @@ impl AnalysisProject {
     }
 
     pub fn set_comment(&mut self, address: u64, text: impl Into<String>) {
-        let text = text.into();
+        let text = text.into().trim().to_string();
+        if text.is_empty() {
+            self.remove_comment(address);
+            return;
+        }
         if let Some(existing) = self
             .comments
             .iter_mut()
@@ -81,6 +89,37 @@ impl AnalysisProject {
             self.bookmarks.push(Bookmark { address, label });
             self.bookmarks.sort_by_key(|bookmark| bookmark.address);
         }
+    }
+
+    pub fn remove_user_name(&mut self, address: u64) {
+        self.user_names
+            .retain(|user_name| user_name.address != address);
+    }
+
+    pub fn remove_comment(&mut self, address: u64) {
+        self.comments.retain(|comment| comment.address != address);
+    }
+
+    pub fn user_name_at(&self, address: u64) -> Option<&UserName> {
+        self.user_names
+            .iter()
+            .find(|user_name| user_name.address == address)
+    }
+
+    pub fn comment_at(&self, address: u64) -> Option<&Comment> {
+        self.comments
+            .iter()
+            .find(|comment| comment.address == address)
+    }
+
+    pub fn bookmark_at(&self, address: u64) -> Option<&Bookmark> {
+        self.bookmarks
+            .iter()
+            .find(|bookmark| bookmark.address == address)
+    }
+
+    pub fn is_bookmarked(&self, address: u64) -> bool {
+        self.bookmark_at(address).is_some()
     }
 }
 
@@ -176,5 +215,18 @@ mod tests {
         assert_eq!(project.comments.len(), 1);
         assert_eq!(project.comments[0].text, "new comment");
         assert!(project.bookmarks.is_empty());
+    }
+
+    #[test]
+    fn empty_name_and_comment_remove_existing_entries() {
+        let mut project = AnalysisProject::from_binary("sample.exe", b"binary");
+
+        project.set_user_name(0x1000, "entry");
+        project.set_comment(0x1000, "important");
+        project.set_user_name(0x1000, " ");
+        project.set_comment(0x1000, "");
+
+        assert!(project.user_name_at(0x1000).is_none());
+        assert!(project.comment_at(0x1000).is_none());
     }
 }

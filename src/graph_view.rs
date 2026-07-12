@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::graph::{Address, BasicBlock, ControlFlowGraph, EdgeType};
 
@@ -106,11 +106,27 @@ impl Default for GraphViewport {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GraphScope {
+    WholeProgram,
+    Function(Address),
+}
+
+impl GraphScope {
+    pub fn label(&self) -> String {
+        match self {
+            GraphScope::WholeProgram => "whole program".to_string(),
+            GraphScope::Function(entry) => format!("function {}", entry),
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct GraphView {
     pub blocks: HashMap<Address, BlockLayout>,
     pub edges: Vec<EdgeLayout>,
     pub viewport: GraphViewport,
+    pub scope: GraphScope,
     pub selected_block: Option<Address>,
     pub layout_computed: bool,
 }
@@ -121,29 +137,39 @@ impl GraphView {
             blocks: HashMap::new(),
             edges: Vec::new(),
             viewport: GraphViewport::new(),
+            scope: GraphScope::WholeProgram,
             selected_block: None,
             layout_computed: false,
         }
+    }
+
+    pub fn set_scope(&mut self, scope: GraphScope) {
+        if self.scope != scope {
+            self.scope = scope;
+            self.layout_computed = false;
+            self.blocks.clear();
+            self.edges.clear();
+        }
+    }
+
+    pub fn scope_label(&self) -> String {
+        self.scope.label()
     }
 
     pub fn build_from_cfg(&mut self, cfg: &ControlFlowGraph) {
         self.blocks.clear();
         self.edges.clear();
 
+        let visible = self.visible_addresses(cfg);
+
         // Calculate block layouts using hierarchical layout
-        self.compute_hierarchical_layout(cfg);
+        self.compute_hierarchical_layout(cfg, visible.as_ref());
 
         // Create edge layouts
         self.compute_edge_layouts(cfg);
 
         self.layout_computed = true;
-
-        // Select the first block if available and center viewport
-        if self.selected_block.is_none() {
-            if let Some(first_addr) = self.blocks.keys().next().copied() {
-                self.selected_block = Some(first_addr);
-            }
-        }
+        self.reconcile_selection();
 
         // Always center on selected block after layout
         if let Some(selected) = self.selected_block {
@@ -153,42 +179,73 @@ impl GraphView {
         }
     }
 
-    fn compute_hierarchical_layout(&mut self, cfg: &ControlFlowGraph) {
-        if cfg.blocks.is_empty() {
+    fn visible_addresses(&self, cfg: &ControlFlowGraph) -> Option<HashSet<Address>> {
+        match self.scope {
+            GraphScope::WholeProgram => None,
+            GraphScope::Function(entry) => {
+                Some(cfg.function_block_addresses(entry).into_iter().collect())
+            }
+        }
+    }
+
+    fn reconcile_selection(&mut self) {
+        let preferred = match self.scope {
+            GraphScope::Function(entry) if self.blocks.contains_key(&entry) => Some(entry),
+            _ => self.blocks.keys().min().copied(),
+        };
+
+        if self
+            .selected_block
+            .is_none_or(|selected| !self.blocks.contains_key(&selected))
+        {
+            self.selected_block = preferred;
+        }
+    }
+
+    fn compute_hierarchical_layout(
+        &mut self,
+        cfg: &ControlFlowGraph,
+        visible: Option<&HashSet<Address>>,
+    ) {
+        let block_count = visible.map_or(cfg.blocks.len(), |addresses| addresses.len());
+        if block_count == 0 {
             return;
         }
 
-        // eprintln!("DEBUG: Starting layout computation for {} blocks", cfg.blocks.len());
-
         // Use simple grid layout for all graphs for now
-        self.compute_grid_layout(cfg);
+        self.compute_grid_layout(cfg, visible);
     }
 
-    fn compute_grid_layout(&mut self, cfg: &ControlFlowGraph) {
-        // eprintln!("DEBUG: Using grid layout for {} blocks", cfg.blocks.len());
+    fn compute_grid_layout(&mut self, cfg: &ControlFlowGraph, visible: Option<&HashSet<Address>>) {
+        let mut sorted_blocks: Vec<Address> = match visible {
+            Some(addresses) => addresses
+                .iter()
+                .filter(|address| cfg.blocks.contains_key(address))
+                .copied()
+                .collect(),
+            None => cfg.blocks.keys().copied().collect(),
+        };
+        sorted_blocks.sort();
 
-        let blocks_per_row = (cfg.blocks.len() as f64).sqrt().ceil() as usize;
+        let blocks_per_row = (sorted_blocks.len() as f64).sqrt().ceil().max(1.0) as usize;
         let block_width = 50.0;
         let block_height = 12.0;
         let spacing_x = 80.0;
         let spacing_y = 25.0;
 
-        let mut sorted_blocks: Vec<_> = cfg.blocks.keys().collect();
-        sorted_blocks.sort();
-
-        for (i, &addr) in sorted_blocks.iter().enumerate() {
+        for (i, addr) in sorted_blocks.iter().copied().enumerate() {
             let row = i / blocks_per_row;
             let col = i % blocks_per_row;
 
             let x = col as f64 * spacing_x - (blocks_per_row as f64 * spacing_x) / 2.0;
             let y = row as f64 * spacing_y;
 
-            let block_type = self.classify_block_type(cfg, *addr);
+            let block_type = self.classify_block_type(cfg, addr);
 
             self.blocks.insert(
-                *addr,
+                addr,
                 BlockLayout {
-                    address: *addr,
+                    address: addr,
                     position: Point::new(x, y),
                     size: Point::new(block_width, block_height),
                     level: row as i32,
@@ -196,12 +253,7 @@ impl GraphView {
                 },
             );
         }
-
-        // eprintln!("DEBUG: Grid layout: {} rows, {} blocks positioned",
-        //          (sorted_blocks.len() + blocks_per_row - 1) / blocks_per_row,
-        //          sorted_blocks.len());
     }
-
     fn compute_edge_layouts(&mut self, cfg: &ControlFlowGraph) {
         for edge in &cfg.edges {
             if let (Some(from_block), Some(to_block)) =
@@ -233,7 +285,12 @@ impl GraphView {
                 NavigationDirection::Up => {
                     // Find predecessor with highest address
                     if let Some(block) = cfg.blocks.get(&current) {
-                        block.predecessors.iter().max().copied()
+                        block
+                            .predecessors
+                            .iter()
+                            .filter(|address| self.blocks.contains_key(address))
+                            .max()
+                            .copied()
                     } else {
                         None
                     }
@@ -241,7 +298,12 @@ impl GraphView {
                 NavigationDirection::Down => {
                     // Find successor with lowest address
                     if let Some(block) = cfg.blocks.get(&current) {
-                        block.successors.iter().min().copied()
+                        block
+                            .successors
+                            .iter()
+                            .filter(|address| self.blocks.contains_key(address))
+                            .min()
+                            .copied()
                     } else {
                         None
                     }
@@ -339,7 +401,9 @@ impl GraphView {
     }
 
     pub fn get_selected_block<'a>(&self, cfg: &'a ControlFlowGraph) -> Option<&'a BasicBlock> {
-        self.selected_block.and_then(|addr| cfg.blocks.get(&addr))
+        self.selected_block
+            .filter(|addr| self.blocks.contains_key(addr))
+            .and_then(|addr| cfg.blocks.get(&addr))
     }
 
     fn classify_block_type(&self, cfg: &ControlFlowGraph, addr: Address) -> BlockType {

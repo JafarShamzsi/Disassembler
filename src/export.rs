@@ -1,5 +1,5 @@
 use crate::arch;
-use crate::graph::ControlFlowGraph;
+use crate::graph::{Address, ControlFlowGraph, ExternalCallTarget};
 use crate::parser::{BinaryAnalysis, BinaryMetadata};
 use arch::x86::Instruction;
 use serde::{Deserialize, Serialize};
@@ -87,6 +87,7 @@ pub struct ExportData {
     pub metadata: ExportMetadata,
     pub instructions: Vec<ExportableInstruction>,
     pub cfg_info: Option<CfgExportData>,
+    pub call_graph_info: Option<CallGraphExportData>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -100,15 +101,71 @@ pub struct ExportMetadata {
     pub binary_format: Option<String>,
     pub entry_point: Option<u64>,
     pub import_count: usize,
+    pub export_count: usize,
     pub symbol_count: usize,
     pub string_count: usize,
+    pub relocation_count: usize,
+    pub function_range_count: usize,
+    pub section_count: usize,
+    pub function_count: usize,
+    pub call_graph_edge_count: usize,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct CfgExportData {
     pub block_count: usize,
     pub edge_count: usize,
+    pub noreturn_target_count: usize,
     pub entry_points: Vec<u64>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CallGraphExportData {
+    pub function_count: usize,
+    pub edge_count: usize,
+    pub internal_edge_count: usize,
+    pub external_function_count: usize,
+    pub external_edge_count: usize,
+    pub functions: Vec<CallGraphFunctionExport>,
+    pub edges: Vec<CallGraphEdgeExport>,
+    pub external_functions: Vec<CallGraphExternalFunctionExport>,
+    pub external_edges: Vec<CallGraphExternalEdgeExport>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CallGraphFunctionExport {
+    pub entry: u64,
+    pub kind: String,
+    pub confidence: String,
+    pub block_count: usize,
+    pub instruction_count: usize,
+    pub internal_edge_count: usize,
+    pub incoming_call_count: usize,
+    pub outgoing_call_count: usize,
+    pub import_thunk_target: Option<u64>,
+    pub import_thunk_label: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CallGraphEdgeExport {
+    pub caller: u64,
+    pub callee: u64,
+    pub call_sites: Vec<u64>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CallGraphExternalFunctionExport {
+    pub address: u64,
+    pub label: String,
+    pub incoming_call_count: usize,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CallGraphExternalEdgeExport {
+    pub caller: u64,
+    pub target: u64,
+    pub label: String,
+    pub call_sites: Vec<u64>,
 }
 
 pub struct Exporter;
@@ -150,6 +207,7 @@ impl Exporter {
         let metadata = Self::create_metadata_with_analysis(
             &exportable,
             None,
+            None,
             binary_metadata,
             binary_analysis,
         );
@@ -157,6 +215,7 @@ impl Exporter {
             metadata,
             instructions: exportable,
             cfg_info: None,
+            call_graph_info: None,
         };
 
         match format {
@@ -211,12 +270,15 @@ impl Exporter {
         let cfg_info = Some(CfgExportData {
             block_count: cfg.blocks.len(),
             edge_count: cfg.edges.len(),
+            noreturn_target_count: cfg.noreturn_call_target_count(),
             entry_points: cfg.blocks.keys().map(|addr| addr.0).collect(),
         });
+        let call_graph_info = Some(Self::create_call_graph_export(cfg, binary_analysis));
 
         let metadata = Self::create_metadata_with_analysis(
             &exportable,
             cfg_info.as_ref(),
+            call_graph_info.as_ref(),
             binary_metadata,
             binary_analysis,
         );
@@ -224,11 +286,13 @@ impl Exporter {
             metadata,
             instructions: exportable,
             cfg_info,
+            call_graph_info,
         };
 
         match format {
             ExportFormat::Json => Self::export_json(&export_data, path),
             ExportFormat::Html => Self::export_html_with_cfg(&export_data, cfg, path),
+            ExportFormat::Markdown => Self::export_markdown(&export_data, path),
             ExportFormat::Dot => Self::export_dot(cfg, path),
             _ => Self::export_instructions_with_metadata_and_analysis(
                 instructions,
@@ -243,6 +307,7 @@ impl Exporter {
     fn create_metadata_with_analysis(
         instructions: &[ExportableInstruction],
         _cfg_info: Option<&CfgExportData>,
+        call_graph_info: Option<&CallGraphExportData>,
         binary_metadata: Option<&BinaryMetadata>,
         binary_analysis: Option<&BinaryAnalysis>,
     ) -> ExportMetadata {
@@ -270,12 +335,103 @@ impl Exporter {
             import_count: binary_analysis
                 .map(|analysis| analysis.imports.len())
                 .unwrap_or_default(),
+            export_count: binary_analysis
+                .map(|analysis| analysis.exports.len())
+                .unwrap_or_default(),
             symbol_count: binary_analysis
                 .map(|analysis| analysis.symbols.len())
                 .unwrap_or_default(),
             string_count: binary_analysis
                 .map(|analysis| analysis.strings.len())
                 .unwrap_or_default(),
+            relocation_count: binary_analysis
+                .map(|analysis| analysis.relocations.len())
+                .unwrap_or_default(),
+            function_range_count: binary_analysis
+                .map(|analysis| analysis.function_ranges.len())
+                .unwrap_or_default(),
+            section_count: binary_analysis
+                .map(|analysis| analysis.sections.len())
+                .unwrap_or_default(),
+            function_count: call_graph_info
+                .map(|call_graph| call_graph.function_count)
+                .unwrap_or_default(),
+            call_graph_edge_count: call_graph_info
+                .map(|call_graph| call_graph.edge_count)
+                .unwrap_or_default(),
+        }
+    }
+
+    fn create_call_graph_export(
+        cfg: &ControlFlowGraph,
+        binary_analysis: Option<&BinaryAnalysis>,
+    ) -> CallGraphExportData {
+        let call_graph = cfg.call_graph_with_external_targets(
+            binary_analysis
+                .map(build_external_call_targets)
+                .unwrap_or_default(),
+        );
+        let functions = call_graph
+            .functions
+            .iter()
+            .map(|function| CallGraphFunctionExport {
+                entry: function.summary.entry.0,
+                kind: function.summary.kind.as_str().to_string(),
+                confidence: function.summary.confidence.as_str().to_string(),
+                block_count: function.summary.block_count,
+                instruction_count: function.summary.instruction_count,
+                internal_edge_count: function.summary.edge_count,
+                incoming_call_count: function.incoming_call_count,
+                outgoing_call_count: function.outgoing_call_count,
+                import_thunk_target: function
+                    .import_thunk
+                    .as_ref()
+                    .map(|target| target.address.0),
+                import_thunk_label: function
+                    .import_thunk
+                    .as_ref()
+                    .map(|target| target.label.clone()),
+            })
+            .collect::<Vec<_>>();
+        let edges = call_graph
+            .edges
+            .iter()
+            .map(|edge| CallGraphEdgeExport {
+                caller: edge.caller.0,
+                callee: edge.callee.0,
+                call_sites: edge.call_sites.iter().map(|site| site.0).collect(),
+            })
+            .collect::<Vec<_>>();
+        let external_functions = call_graph
+            .external_functions
+            .iter()
+            .map(|function| CallGraphExternalFunctionExport {
+                address: function.address.0,
+                label: function.label.clone(),
+                incoming_call_count: function.incoming_call_count,
+            })
+            .collect::<Vec<_>>();
+        let external_edges = call_graph
+            .external_edges
+            .iter()
+            .map(|edge| CallGraphExternalEdgeExport {
+                caller: edge.caller.0,
+                target: edge.target.0,
+                label: edge.label.clone(),
+                call_sites: edge.call_sites.iter().map(|site| site.0).collect(),
+            })
+            .collect::<Vec<_>>();
+
+        CallGraphExportData {
+            function_count: functions.len(),
+            edge_count: edges.len() + external_edges.len(),
+            internal_edge_count: edges.len(),
+            external_function_count: external_functions.len(),
+            external_edge_count: external_edges.len(),
+            functions,
+            edges,
+            external_functions,
+            external_edges,
         }
     }
 
@@ -347,6 +503,10 @@ impl Exporter {
             write!(file, "{}", Self::html_cfg_summary(cfg_info))?;
         }
 
+        if let Some(call_graph_info) = &data.call_graph_info {
+            write!(file, "{}", Self::html_call_graph_summary(call_graph_info))?;
+        }
+
         write!(file, "{}", Self::html_cfg_blocks(cfg))?;
         write!(
             file,
@@ -381,13 +541,102 @@ impl Exporter {
             "**Address Range:** {:#x} - {:#x}",
             data.metadata.address_range.0, data.metadata.address_range.1
         )?;
+        writeln!(
+            file,
+            "**Imports / Exports / Symbols:** {} / {} / {}",
+            data.metadata.import_count, data.metadata.export_count, data.metadata.symbol_count
+        )?;
+        writeln!(file, "**Relocations:** {}", data.metadata.relocation_count)?;
+        writeln!(
+            file,
+            "**Unwind function ranges:** {}",
+            data.metadata.function_range_count
+        )?;
         writeln!(file)?;
 
         if let Some(cfg_info) = &data.cfg_info {
             writeln!(file, "## Control Flow Information")?;
             writeln!(file, "- **Basic Blocks:** {}", cfg_info.block_count)?;
             writeln!(file, "- **Edges:** {}", cfg_info.edge_count)?;
+            writeln!(
+                file,
+                "- **Noreturn import targets:** {}",
+                cfg_info.noreturn_target_count
+            )?;
             writeln!(file)?;
+        }
+
+        if let Some(call_graph_info) = &data.call_graph_info {
+            writeln!(file, "## Call Graph")?;
+            writeln!(file, "- **Functions:** {}", call_graph_info.function_count)?;
+            writeln!(file, "- **Call Edges:** {}", call_graph_info.edge_count)?;
+            writeln!(
+                file,
+                "  - Internal: {}  External imports: {}",
+                call_graph_info.internal_edge_count, call_graph_info.external_edge_count
+            )?;
+            writeln!(file)?;
+            if !call_graph_info.functions.is_empty() {
+                writeln!(file, "| Function | Kind | Confidence | Calls In | Calls Out | Blocks | Instructions | Import Thunk |")?;
+                writeln!(file, "|----------|------|------------|----------|-----------|--------|--------------|--------------|")?;
+                for function in call_graph_info.functions.iter().take(25) {
+                    writeln!(
+                        file,
+                        "| {:#x} | {} | {} | {} | {} | {} | {} | {} |",
+                        function.entry,
+                        function.kind,
+                        function.confidence,
+                        function.incoming_call_count,
+                        function.outgoing_call_count,
+                        function.block_count,
+                        function.instruction_count,
+                        function.import_thunk_label.as_deref().unwrap_or("")
+                    )?;
+                }
+                writeln!(file)?;
+            }
+            if !call_graph_info.edges.is_empty() {
+                writeln!(file, "### Internal Calls")?;
+                writeln!(file)?;
+                writeln!(file, "| Caller | Callee | Call Sites |")?;
+                writeln!(file, "|--------|--------|------------|")?;
+                for edge in call_graph_info.edges.iter().take(25) {
+                    let sites = edge
+                        .call_sites
+                        .iter()
+                        .take(4)
+                        .map(|site| format!("{site:#x}"))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    writeln!(
+                        file,
+                        "| {:#x} | {:#x} | {} |",
+                        edge.caller, edge.callee, sites
+                    )?;
+                }
+                writeln!(file)?;
+            }
+            if !call_graph_info.external_edges.is_empty() {
+                writeln!(file, "### External Import Calls")?;
+                writeln!(file)?;
+                writeln!(file, "| Caller | Import | Target | Call Sites |")?;
+                writeln!(file, "|--------|--------|--------|------------|")?;
+                for edge in call_graph_info.external_edges.iter().take(25) {
+                    let sites = edge
+                        .call_sites
+                        .iter()
+                        .take(4)
+                        .map(|site| format!("{site:#x}"))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    writeln!(
+                        file,
+                        "| {:#x} | {} | {:#x} | {} |",
+                        edge.caller, edge.label, edge.target, sites
+                    )?;
+                }
+                writeln!(file)?;
+            }
         }
 
         writeln!(file, "## Instructions")?;
@@ -525,6 +774,14 @@ impl Exporter {
             <div class="metadata-item"><strong>Architecture:</strong> {}</div>
             <div class="metadata-item"><strong>Format:</strong> {}</div>
             <div class="metadata-item"><strong>Entry Point:</strong> {}</div>
+            <div class="metadata-item"><strong>Imports:</strong> {}</div>
+            <div class="metadata-item"><strong>Exports:</strong> {}</div>
+            <div class="metadata-item"><strong>Symbols:</strong> {}</div>
+            <div class="metadata-item"><strong>Relocations:</strong> {}</div>
+            <div class="metadata-item"><strong>Unwind ranges:</strong> {}</div>
+            <div class="metadata-item"><strong>Sections:</strong> {}</div>
+            <div class="metadata-item"><strong>Functions:</strong> {}</div>
+            <div class="metadata-item"><strong>Call Edges:</strong> {}</div>
         </div>
     </div>
 "#,
@@ -539,7 +796,15 @@ impl Exporter {
             metadata
                 .entry_point
                 .map(|entry| format!("{entry:#x}"))
-                .unwrap_or_else(|| "none".to_string())
+                .unwrap_or_else(|| "none".to_string()),
+            metadata.import_count,
+            metadata.export_count,
+            metadata.symbol_count,
+            metadata.relocation_count,
+            metadata.function_range_count,
+            metadata.section_count,
+            metadata.function_count,
+            metadata.call_graph_edge_count
         )
     }
 
@@ -549,13 +814,88 @@ impl Exporter {
         <h2>Control Flow Graph</h2>
         <p><strong>Basic Blocks:</strong> {}</p>
         <p><strong>Edges:</strong> {}</p>
+        <p><strong>Noreturn import targets:</strong> {}</p>
         <p><strong>Entry Points:</strong> {}</p>
     </div>
 "#,
             cfg_info.block_count,
             cfg_info.edge_count,
+            cfg_info.noreturn_target_count,
             cfg_info.entry_points.len()
         )
+    }
+
+    fn html_call_graph_summary(call_graph_info: &CallGraphExportData) -> String {
+        let mut html = format!(
+            r#"    <div class="cfg-summary">
+        <h2>Call Graph</h2>
+        <p><strong>Functions:</strong> {}</p>
+        <p><strong>Call Edges:</strong> {} internal, {} external imports</p>
+"#,
+            call_graph_info.function_count,
+            call_graph_info.internal_edge_count,
+            call_graph_info.external_edge_count
+        );
+
+        if !call_graph_info.functions.is_empty() {
+            html.push_str("        <table><thead><tr><th>Function</th><th>Kind</th><th>Confidence</th><th>Calls In</th><th>Calls Out</th><th>Blocks</th><th>Instructions</th><th>Import Thunk</th></tr></thead><tbody>\n");
+            for function in call_graph_info.functions.iter().take(20) {
+                html.push_str(&format!(
+                    "            <tr><td>{:#x}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>\n",
+                    function.entry,
+                    html_escape(&function.kind),
+                    html_escape(&function.confidence),
+                    function.incoming_call_count,
+                    function.outgoing_call_count,
+                    function.block_count,
+                    function.instruction_count,
+                    html_escape(function.import_thunk_label.as_deref().unwrap_or(""))
+                ));
+            }
+            html.push_str("        </tbody></table>\n");
+        }
+
+        if !call_graph_info.edges.is_empty() {
+            html.push_str("        <h3>Internal Calls</h3>\n        <ul>\n");
+            for edge in call_graph_info.edges.iter().take(10) {
+                let sites = edge
+                    .call_sites
+                    .iter()
+                    .take(3)
+                    .map(|site| format!("{site:#x}"))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                html.push_str(&format!(
+                    "            <li>{:#x} -> {:#x} ({})</li>\n",
+                    edge.caller, edge.callee, sites
+                ));
+            }
+            html.push_str("        </ul>\n");
+        }
+
+        if !call_graph_info.external_edges.is_empty() {
+            html.push_str("        <h3>External Import Calls</h3>\n        <ul>\n");
+            for edge in call_graph_info.external_edges.iter().take(10) {
+                let sites = edge
+                    .call_sites
+                    .iter()
+                    .take(3)
+                    .map(|site| format!("{site:#x}"))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                html.push_str(&format!(
+                    "            <li>{:#x} -> {} ({:#x}) ({})</li>\n",
+                    edge.caller,
+                    html_escape(&edge.label),
+                    edge.target,
+                    sites
+                ));
+            }
+            html.push_str("        </ul>\n");
+        }
+
+        html.push_str("    </div>\n");
+        html
     }
 
     fn html_cfg_blocks(cfg: &ControlFlowGraph) -> String {
@@ -681,5 +1021,284 @@ pub fn export_auto_format_with_metadata_and_analysis(
             binary_metadata,
             binary_analysis,
         ),
+    }
+}
+
+fn build_external_call_targets(analysis: &BinaryAnalysis) -> Vec<ExternalCallTarget> {
+    analysis
+        .imports
+        .iter()
+        .filter_map(|import| {
+            let address = import.address?;
+            let library = import.library.as_deref().unwrap_or("unknown");
+            Some(ExternalCallTarget {
+                address: Address(address),
+                label: format!("{library}!{}", import.name),
+            })
+        })
+        .collect()
+}
+
+fn html_escape(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&#39;")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::graph::{Address, FunctionSeed, Instruction as CfgInstruction};
+    use crate::parser::ImportSummary;
+    use std::fs;
+
+    fn instruction(address: u64, text: &str, size: usize) -> Instruction {
+        Instruction {
+            address,
+            bytes: vec![0x90; size],
+            text: text.to_string(),
+        }
+    }
+
+    fn cfg_instruction(
+        address: u64,
+        mnemonic: &str,
+        operands: &str,
+        size: usize,
+    ) -> CfgInstruction {
+        CfgInstruction {
+            address: Address(address),
+            mnemonic: mnemonic.to_string(),
+            operands: operands.to_string(),
+            bytes: vec![0x90; size],
+        }
+    }
+
+    #[test]
+    fn json_export_includes_noreturn_cfg_info() {
+        let mut cfg = ControlFlowGraph::new();
+        cfg.build_from_instructions_with_function_seeds_and_noreturn_targets(
+            vec![
+                cfg_instruction(0x1000, "call", "qword [rel 0000000000003000h]", 6),
+                cfg_instruction(0x1006, "ret", "", 1),
+            ],
+            [FunctionSeed::entry_point(Address(0x1000))],
+            [crate::graph::NoreturnCallTarget {
+                address: Address(0x3000),
+                label: "kernel32.dll!ExitProcess".to_string(),
+            }],
+        );
+
+        let instructions = vec![
+            instruction(0x1000, "call qword [rel 0000000000003000h]", 6),
+            instruction(0x1006, "ret", 1),
+        ];
+        let path = std::env::temp_dir().join(format!(
+            "disassembler-noreturn-cfg-export-{}.json",
+            std::process::id()
+        ));
+
+        Exporter::export_with_cfg_metadata_and_analysis(
+            &instructions,
+            &cfg,
+            ExportFormat::Json,
+            path.to_str().unwrap(),
+            None,
+            None,
+        )
+        .unwrap();
+
+        let json: serde_json::Value = serde_json::from_str(&fs::read_to_string(&path).unwrap())
+            .expect("export should be valid JSON");
+        let _ = fs::remove_file(&path);
+
+        assert_eq!(json["cfg_info"]["noreturn_target_count"], 1);
+        assert_eq!(json["cfg_info"]["edge_count"], 0);
+    }
+    #[test]
+    fn json_export_includes_import_thunk_info() {
+        let mut cfg = ControlFlowGraph::new();
+        cfg.build_from_instructions_with_function_seeds(
+            vec![
+                cfg_instruction(0x1000, "call", "0000000000002000h", 5),
+                cfg_instruction(0x1005, "ret", "", 1),
+                cfg_instruction(0x2000, "jmp", "qword [rel 0000000000003000h]", 6),
+            ],
+            [FunctionSeed::entry_point(Address(0x1000))],
+        );
+
+        let instructions = vec![
+            instruction(0x1000, "call 0000000000002000h", 5),
+            instruction(0x1005, "ret", 1),
+            instruction(0x2000, "jmp qword [rel 0000000000003000h]", 6),
+        ];
+        let analysis = BinaryAnalysis {
+            imports: vec![ImportSummary {
+                address: Some(0x3000),
+                library: Some("kernel32.dll".to_string()),
+                name: "ExitProcess".to_string(),
+            }],
+            ..BinaryAnalysis::default()
+        };
+        let path = std::env::temp_dir().join(format!(
+            "disassembler-import-thunk-export-{}.json",
+            std::process::id()
+        ));
+
+        Exporter::export_with_cfg_metadata_and_analysis(
+            &instructions,
+            &cfg,
+            ExportFormat::Json,
+            path.to_str().unwrap(),
+            None,
+            Some(&analysis),
+        )
+        .unwrap();
+
+        let json: serde_json::Value = serde_json::from_str(&fs::read_to_string(&path).unwrap())
+            .expect("export should be valid JSON");
+        let _ = fs::remove_file(&path);
+
+        let thunk = json["call_graph_info"]["functions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|function| function["entry"] == 0x2000)
+            .unwrap();
+        assert_eq!(thunk["kind"], "thunk");
+        assert_eq!(thunk["import_thunk_target"], 0x3000);
+        assert_eq!(thunk["import_thunk_label"], "kernel32.dll!ExitProcess");
+        assert!(json["call_graph_info"]["external_edges"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|edge| edge["caller"] == 0x2000 && edge["target"] == 0x3000));
+    }
+    #[test]
+    fn json_export_includes_external_import_call_graph_info() {
+        let mut cfg = ControlFlowGraph::new();
+        cfg.build_from_instructions_with_function_seeds(
+            vec![
+                cfg_instruction(0x1000, "call", "qword [rel 0000000000003000h]", 6),
+                cfg_instruction(0x1006, "ret", "", 1),
+            ],
+            [FunctionSeed::entry_point(Address(0x1000))],
+        );
+
+        let instructions = vec![
+            instruction(0x1000, "call qword [rel 0000000000003000h]", 6),
+            instruction(0x1006, "ret", 1),
+        ];
+        let analysis = BinaryAnalysis {
+            imports: vec![ImportSummary {
+                address: Some(0x3000),
+                library: Some("kernel32.dll".to_string()),
+                name: "ExitProcess".to_string(),
+            }],
+            ..BinaryAnalysis::default()
+        };
+        let path = std::env::temp_dir().join(format!(
+            "disassembler-external-callgraph-export-{}.json",
+            std::process::id()
+        ));
+
+        Exporter::export_with_cfg_metadata_and_analysis(
+            &instructions,
+            &cfg,
+            ExportFormat::Json,
+            path.to_str().unwrap(),
+            None,
+            Some(&analysis),
+        )
+        .unwrap();
+
+        let json: serde_json::Value = serde_json::from_str(&fs::read_to_string(&path).unwrap())
+            .expect("export should be valid JSON");
+        let _ = fs::remove_file(&path);
+
+        assert_eq!(json["metadata"]["function_count"], 1);
+        assert_eq!(json["metadata"]["call_graph_edge_count"], 1);
+        assert_eq!(json["call_graph_info"]["function_count"], 1);
+        assert_eq!(json["call_graph_info"]["internal_edge_count"], 0);
+        assert_eq!(json["call_graph_info"]["external_edge_count"], 1);
+        assert_eq!(json["call_graph_info"]["external_function_count"], 1);
+        assert_eq!(
+            json["call_graph_info"]["external_functions"][0]["label"],
+            "kernel32.dll!ExitProcess"
+        );
+        assert_eq!(
+            json["call_graph_info"]["external_edges"][0]["caller"],
+            0x1000
+        );
+        assert_eq!(
+            json["call_graph_info"]["external_edges"][0]["target"],
+            0x3000
+        );
+        assert_eq!(
+            json["call_graph_info"]["external_edges"][0]["label"],
+            "kernel32.dll!ExitProcess"
+        );
+        assert_eq!(
+            json["call_graph_info"]["external_edges"][0]["call_sites"][0],
+            0x1000
+        );
+    }
+
+    #[test]
+    fn json_export_includes_call_graph_info() {
+        let mut cfg = ControlFlowGraph::new();
+        cfg.build_from_instructions(vec![
+            cfg_instruction(0x1000, "call", "0000000000002000h", 5),
+            cfg_instruction(0x1005, "ret", "", 1),
+            cfg_instruction(0x2000, "push", "rbp", 1),
+            cfg_instruction(0x2001, "mov", "rbp,rsp", 3),
+            cfg_instruction(0x2004, "ret", "", 1),
+        ]);
+
+        let instructions = vec![
+            instruction(0x1000, "call 0000000000002000h", 5),
+            instruction(0x1005, "ret", 1),
+            instruction(0x2000, "push rbp", 1),
+            instruction(0x2001, "mov rbp,rsp", 3),
+            instruction(0x2004, "ret", 1),
+        ];
+        let path = std::env::temp_dir().join(format!(
+            "disassembler-callgraph-export-{}.json",
+            std::process::id()
+        ));
+
+        Exporter::export_with_cfg_metadata_and_analysis(
+            &instructions,
+            &cfg,
+            ExportFormat::Json,
+            path.to_str().unwrap(),
+            None,
+            None,
+        )
+        .unwrap();
+
+        let json: serde_json::Value = serde_json::from_str(&fs::read_to_string(&path).unwrap())
+            .expect("export should be valid JSON");
+        let _ = fs::remove_file(&path);
+
+        assert_eq!(json["metadata"]["function_count"], 2);
+        assert_eq!(json["metadata"]["call_graph_edge_count"], 1);
+        assert_eq!(json["call_graph_info"]["function_count"], 2);
+        assert_eq!(json["call_graph_info"]["functions"][0]["kind"], "entry");
+        assert_eq!(
+            json["call_graph_info"]["functions"][0]["confidence"],
+            "high"
+        );
+        assert_eq!(json["call_graph_info"]["functions"][1]["kind"], "standard");
+        assert_eq!(
+            json["call_graph_info"]["functions"][1]["confidence"],
+            "high"
+        );
+        assert_eq!(json["call_graph_info"]["edges"][0]["caller"], 0x1000);
+        assert_eq!(json["call_graph_info"]["edges"][0]["callee"], 0x2000);
+        assert_eq!(json["call_graph_info"]["edges"][0]["call_sites"][0], 0x1000);
     }
 }

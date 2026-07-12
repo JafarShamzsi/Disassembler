@@ -1,0 +1,39 @@
+name: Feature request
+description: Suggest an analysis, TUI, export, loader, or project-workflow improvement
+title: "feature: "
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What workflow is blocked or too slow today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: Describe the behavior, commands, tabs, output, or API you want.
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - TUI
+        - Disassembly
+        - Control flow graph
+        - Functions and xrefs
+        - Project files
+        - Export
+        - Loader/sections
+        - Documentation/open-source readiness
+    validations:
+      required: true
+  - type: textarea
+    id: references
+    attributes:
+      label: References
+      description: Similar behavior in IDA, Ghidra, Binary Ninja, radare2, or terminal tools.

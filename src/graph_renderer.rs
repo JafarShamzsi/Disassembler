@@ -277,7 +277,7 @@ impl GraphRenderer {
 
         let block_with_title = Block::default()
             .borders(Borders::ALL)
-            .title("Control Flow Graph");
+            .title(format!("Control Flow Graph - {}", graph_view.scope_label()));
 
         let inner_area = block_with_title.inner(area);
         f.render_widget(block_with_title, area);
@@ -328,15 +328,22 @@ impl GraphRenderer {
                 ),
                 Span::styled("Arrow Keys", Style::default().fg(Color::Green)),
                 Span::raw(" = Navigate Blocks | "),
+                Span::styled("Enter", Style::default().fg(Color::Green)),
+                Span::raw(" = Jump | "),
                 Span::styled("WASD", Style::default().fg(Color::Green)),
                 Span::raw(" = Pan View | "),
                 Span::styled("+/-", Style::default().fg(Color::Green)),
                 Span::raw(" = Zoom | "),
                 Span::styled("C", Style::default().fg(Color::Green)),
-                Span::raw(" = Center"),
+                Span::raw(" = Center | "),
+                Span::styled("F", Style::default().fg(Color::Green)),
+                Span::raw(" = Function/All"),
             ]),
             Line::from(vec![
                 Span::styled(&selected_text, Style::default().fg(Color::Cyan)),
+                Span::raw(" | "),
+                Span::styled("Scope: ", Style::default().fg(Color::Cyan)),
+                Span::raw(graph_view.scope_label()),
                 Span::raw(" | "),
                 Span::styled("Blocks: ", Style::default().fg(Color::Cyan)),
                 Span::raw(graph_view.blocks.len().to_string()),

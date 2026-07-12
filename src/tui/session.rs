@@ -10,12 +10,14 @@ use ratatui::{
     Terminal,
 };
 use std::io;
+use std::path::PathBuf;
 
 use super::app::App;
 use super::input::run_app;
 use crate::arch::x86::Instruction;
 use crate::graph::ControlFlowGraph;
-use crate::parser::BinaryAnalysis;
+use crate::parser::{BinaryAnalysis, BinaryMetadata};
+use crate::project::AnalysisProject;
 
 struct TerminalCleanupGuard;
 
@@ -29,6 +31,54 @@ pub fn run_tui(
     instructions: Vec<Instruction>,
     cfg: Option<ControlFlowGraph>,
     analysis: BinaryAnalysis,
+) -> Result<(), Box<dyn std::error::Error>> {
+    run_tui_with_project(instructions, cfg, analysis, None, None)
+}
+
+pub fn run_tui_with_project(
+    instructions: Vec<Instruction>,
+    cfg: Option<ControlFlowGraph>,
+    analysis: BinaryAnalysis,
+    project: Option<AnalysisProject>,
+    save_project: Option<PathBuf>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    run_tui_with_project_and_binary(
+        instructions,
+        Vec::new(),
+        cfg,
+        analysis,
+        project,
+        save_project,
+    )
+}
+
+pub fn run_tui_with_project_and_binary(
+    instructions: Vec<Instruction>,
+    binary: Vec<u8>,
+    cfg: Option<ControlFlowGraph>,
+    analysis: BinaryAnalysis,
+    project: Option<AnalysisProject>,
+    save_project: Option<PathBuf>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    run_tui_with_project_binary_and_metadata(
+        instructions,
+        binary,
+        None,
+        cfg,
+        analysis,
+        project,
+        save_project,
+    )
+}
+
+pub fn run_tui_with_project_binary_and_metadata(
+    instructions: Vec<Instruction>,
+    binary: Vec<u8>,
+    metadata: Option<BinaryMetadata>,
+    cfg: Option<ControlFlowGraph>,
+    analysis: BinaryAnalysis,
+    project: Option<AnalysisProject>,
+    save_project: Option<PathBuf>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // AGGRESSIVE: Reset terminal state before we even start
     emergency_terminal_reset();
@@ -45,7 +95,14 @@ pub fn run_tui(
     let mut terminal = Terminal::new(backend)?;
 
     // Create app and run it
-    let app = App::new(instructions, cfg, analysis);
+    let app = App::with_binary_metadata_and_project(
+        instructions,
+        binary,
+        metadata,
+        cfg,
+        analysis,
+        project,
+    );
     let app_result = run_app(&mut terminal, app);
 
     // Comprehensive terminal cleanup - ensure we always restore terminal state
@@ -54,7 +111,11 @@ pub fn run_tui(
     // AGGRESSIVE: Force complete terminal reset after TUI
     emergency_terminal_reset();
 
-    app_result?;
+    let app = app_result?;
+    if let (Some(save_project), Some(project)) = (save_project.as_ref(), app.project.as_ref()) {
+        project.save(save_project)?;
+    }
+
     Ok(())
 }
 
